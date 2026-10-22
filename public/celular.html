@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <meta name="theme-color" content="#0f172a">
+  <title>Coletor Fila RU - Celular</title>
+  <link rel="stylesheet" href="estilo.css">
+  <style>
+    /* Ajustes específicos para a tela do celular */
+    body {
+      padding-bottom: 20px;
+    }
+    .hud-compacto {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 8px;
+    }
+    .hud-compacto .hud-stat {
+      padding: 6px 8px;
+    }
+    .hud-compacto .hud-stat .value {
+      font-size: 1.25rem;
+    }
+    .lista-fila-compacta {
+      display: flex;
+      gap: 8px;
+      overflow-x: auto;
+      padding: 6px 2px;
+      white-space: nowrap;
+      scrollbar-width: thin;
+    }
+    .tag-pessoa {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      padding: 4px 10px;
+      border-radius: 9999px;
+      font-size: 0.82rem;
+      font-weight: 700;
+    }
+    .tag-pessoa.primeira {
+      background: rgba(22, 163, 74, 0.15);
+      border-color: var(--success);
+      color: var(--success);
+    }
+    .btn-anular-tag {
+      background: transparent;
+      border: none;
+      color: var(--danger);
+      font-size: 1rem;
+      cursor: pointer;
+      line-height: 1;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CABEÇALHO -->
+  <header>
+    <div class="brand">
+      <span>🍽️ Fila RU</span>
+    </div>
+
+    <div class="header-status">
+      <span class="status-badge offline" id="badge-conexao">
+        <span class="status-dot"></span>
+        <span id="txt-conexao">Desconectado</span>
+      </span>
+      <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.75rem;" onclick="CelularApp.abrirModalConfig()">⚙️</button>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL (MOBILE FIRST) -->
+  <main>
+
+    <!-- Banner de Orientação de Tela / HTTP -->
+    <div id="banner-tela-bloqueio" style="display:none; background:rgba(217,119,6,0.12); border:1px solid var(--warning); color:var(--warning); padding:6px 10px; border-radius:8px; font-size:0.78rem;">
+      💡 Dica: Em conexões HTTP locais, mantenha o bloqueio de tela do celular desligado durante a coleta.
+    </div>
+
+    <!-- HUD Compacto de Métricas ao Vivo -->
+    <div class="hud-compacto">
+      <div class="hud-stat highlight-queue">
+        <span class="label">Fila</span>
+        <span class="value" id="hud-fila">0</span>
+      </div>
+      <div class="hud-stat">
+        <span class="label">Atendidos</span>
+        <span class="value" id="hud-atendidos" style="color:var(--btn-atendimento-bg);">0</span>
+      </div>
+      <div class="hud-stat">
+        <span class="label">Chegadas</span>
+        <span class="value" id="hud-chegadas" style="color:var(--btn-chegada-bg);">0</span>
+      </div>
+      <div class="hud-stat">
+        <span class="label">Tempo</span>
+        <span class="value" id="hud-tempo" style="font-size:1.05rem;">00:00</span>
+      </div>
+    </div>
+
+    <!-- Feedback Rápido de Ação (Toast) -->
+    <div class="toast-bar" id="toast-feedback">
+      <span id="toast-icone">🟢</span>
+      <span id="toast-msg">Pronto para coletar. Conecte-se ao servidor.</span>
+    </div>
+
+    <!-- BOTÕES GIGANTES DE COLETA -->
+    <div class="collection-buttons" id="box-botoes">
+      <button class="big-btn chegada" id="btn-chegada" onclick="CelularApp.registrarChegada()">
+        <span class="big-btn-title">CHEGADA</span>
+        <span class="big-btn-subtitle">+1 Pessoa na Fila</span>
+        <span class="big-btn-counter" id="lbl-total-chegadas">Total: 0</span>
+      </button>
+
+      <button class="big-btn atendimento" id="btn-atendimento" onclick="CelularApp.registrarAtendimento()" disabled>
+        <span class="big-btn-title">ATENDIDO</span>
+        <span class="big-btn-subtitle" id="lbl-pessoa-atendimento">Fila Vazia</span>
+        <span class="big-btn-counter" id="lbl-total-atendidos">Total: 0</span>
+      </button>
+    </div>
+
+    <!-- Mini Animação da Fila (Toggleable) -->
+    <div class="animacao-wrapper" id="box-mini-animacao" style="display:block;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.75rem; color:var(--text-muted);">
+        <span>Visualização da Fila</span>
+        <button class="btn btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="CelularApp.toggleAnimacao()">Ocultar</button>
+      </div>
+      <div class="animacao-container" id="container-animacao" style="height:120px;"></div>
+    </div>
+
+    <!-- Lista Compacta de Pessoas na Fila com Ação de Anulação -->
+    <div class="card" style="padding:10px;">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+        <span style="font-size:0.85rem; font-weight:700;">Fila Atual (<span id="lbl-qtd-fila">0</span>)</span>
+        <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="CelularApp.removerUltimaChegada()">
+          ✕ Remover Última Chegada
+        </button>
+      </div>
+      <div class="lista-fila-compacta" id="lista-tags-fila">
+        <span style="font-size:0.8rem; color:var(--text-muted)">Nenhuma pessoa na fila.</span>
+      </div>
+    </div>
+
+    <!-- Ações Auxiliares: Anotação e Reversão -->
+    <div class="btn-group" style="justify-content:space-between;">
+      <button class="btn btn-secondary" style="flex:1;" onclick="CelularApp.abrirModalAnotacao()">
+        📝 Anotação
+      </button>
+      <button class="btn btn-secondary" style="flex:1;" onclick="CelularApp.reverterUltimoAtendimento()">
+        ↩ Reverter Último
+      </button>
+    </div>
+
+  </main>
+
+  <!-- ====================================================================
+       MODAIS
+       ==================================================================== -->
+
+  <!-- Modal 1: Configuração Inicial / Autenticação com PIN -->
+  <div class="modal-backdrop" id="modal-auth">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Conectar ao Servidor RU</span>
+      </div>
+      <p style="font-size:0.85rem; color:var(--text-muted)">
+        Informe o PIN de 4 dígitos exibido no painel do notebook e identifique seu aparelho.
+      </p>
+
+      <form onsubmit="event.preventDefault(); CelularApp.salvarEConectar();">
+        <div class="form-group" style="margin-bottom:10px;">
+          <label for="cfg-pin">PIN de Acesso (4 Dígitos) *</label>
+          <input type="number" id="cfg-pin" required placeholder="Ex: 1234" maxlength="4" style="font-size:1.4rem; text-align:center; font-weight:800; letter-spacing:4px;">
+        </div>
+
+        <div class="form-group" style="margin-bottom:10px;">
+          <label for="cfg-nome">Nome do Aparelho *</label>
+          <input type="text" id="cfg-nome" required value="Celular 1" placeholder="Ex: Celular Entrada 1">
+        </div>
+
+        <div class="form-group" style="margin-bottom:16px;">
+          <label for="cfg-papel">Papel na Coleta</label>
+          <select id="cfg-papel">
+            <option value="ambos">Completo (Chegadas e Atendimentos)</option>
+            <option value="chegada">Somente Chegadas (Entrada)</option>
+            <option value="catraca">Somente Atendimentos (Catraca)</option>
+          </select>
+        </div>
+
+        <button type="submit" class="btn btn-primary" style="width:100%; padding:12px; font-size:1.05rem;">
+          Conectar e Iniciar
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal 2: Inserir Anotação -->
+  <div class="modal-backdrop" id="modal-anotacao">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Inserir Anotação</span>
+        <button class="btn btn-secondary" style="padding:2px 8px;" onclick="CelularApp.fecharModais()">✕</button>
+      </div>
+      <div class="btn-group" style="margin-bottom:8px;">
+        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Catraca travou')">⚠️ Catraca travou</button>
+        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Pico de chegada')">👥 Pico de chegada</button>
+        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Falta de bandeja / comida')">🍲 Reposição</button>
+      </div>
+      <input type="text" id="txt-anotacao" placeholder="Descreva a ocorrência..." maxlength="150">
+      <div class="btn-group" style="justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="CelularApp.fecharModais()">Cancelar</button>
+        <button class="btn btn-primary" onclick="CelularApp.enviarAnotacao()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="celular.js"></script>
+</body>
+</html>
+

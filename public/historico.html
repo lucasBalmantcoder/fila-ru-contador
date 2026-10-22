@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>Histórico e Reprodução - Fila RU</title>
+  <link rel="stylesheet" href="estilo.css">
+  <script src="lib/chart.umd.min.js"></script>
+  <style>
+    /* Estilos do Player de Reprodução da Fila */
+    .player-controls {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+      padding: 10px;
+      background: var(--bg-subtle);
+      border-radius: 8px;
+    }
+    .timeline-container {
+      width: 100%;
+      position: relative;
+      margin: 8px 0;
+    }
+    .timeline-slider {
+      width: 100%;
+      cursor: pointer;
+    }
+    .timeline-markers {
+      position: relative;
+      width: 100%;
+      height: 18px;
+      margin-top: 2px;
+    }
+    .marker-pin {
+      position: absolute;
+      top: 0;
+      transform: translateX(-50%);
+      font-size: 0.75rem;
+      cursor: pointer;
+      user-select: none;
+    }
+    .marker-pin:hover {
+      transform: translateX(-50%) scale(1.3);
+    }
+    .kpi-grid-relatorio {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    @media (min-width: 640px) {
+      .kpi-grid-relatorio {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CABEÇALHO -->
+  <header>
+    <div class="brand">
+      <span>🍽️ Fila RU — Histórico e Reprodução</span>
+    </div>
+
+    <nav class="header-nav">
+      <a href="painel.html">Painel ao Vivo</a>
+      <a href="historico.html" class="active">Histórico & Análises</a>
+      <a href="celular.html" target="_blank">Abrir Celular ↗</a>
+    </nav>
+
+    <div class="header-status">
+      <button class="btn btn-secondary" onclick="HistoricoApp.toggleTheme()" style="padding:4px 8px;">🌓</button>
+    </div>
+  </header>
+
+  <main>
+
+    <!-- LISTA DE SESSÕES SALVAS -->
+    <div class="card" id="card-lista-sessoes">
+      <div class="card-title">
+        <span>Sessões Salvas em Disco</span>
+        <div class="btn-group">
+          <label style="display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; cursor:pointer;">
+            <input type="checkbox" id="chk-mostrar-testes" onchange="HistoricoApp.carregarListaSessoes()">
+            <span>Mostrar sessões de teste</span>
+          </label>
+          <button class="btn btn-secondary" style="font-size:0.8rem; padding:4px 10px;" onclick="HistoricoApp.abrirModalImportar()">📥 Importar JSON</button>
+          <button class="btn btn-secondary" style="font-size:0.8rem; padding:4px 10px;" onclick="HistoricoApp.abrirModalComparar()">📊 Comparar Sessões</button>
+        </div>
+      </div>
+
+      <div id="lista-sessoes-container" style="display:flex; flex-direction:column; gap:8px;">
+        <span style="color:var(--text-muted); text-align:center; padding:15px;">Carregando histórico...</span>
+      </div>
+    </div>
+
+    <!-- ÁREA DETALHADA DA SESSÃO SELECIONADA -->
+    <div id="detalhes-sessao" style="display:none; flex-direction:column; gap:14px;">
+
+      <!-- Cabeçalho da Sessão Selecionada -->
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
+          <div>
+            <h2 id="rel-nome" style="font-size:1.35rem; font-weight:800;">Nome da Sessão</h2>
+            <div id="rel-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:2px;">
+              Local • Início • Duração
+            </div>
+            <p id="rel-obs" style="font-size:0.85rem; margin-top:4px; font-style:italic; color:var(--text-main);"></p>
+          </div>
+
+          <div class="btn-group no-print">
+            <button class="btn btn-secondary" onclick="HistoricoApp.copiarResumo()">📋 Copiar Resumo</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvPessoas()">📄 CSV Pessoas</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvEventos()">📝 CSV Eventos</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvMetricas()">📊 CSV Métricas</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarBackupJson()">💾 Backup JSON</button>
+            <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- PLAYER DE REPRODUÇÃO DA FILA -->
+      <div class="card no-print">
+        <div class="card-title">
+          <span>🎬 Reprodução da Fila ao Longo do Tempo</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Estado exato calculado por derivarEstado(eventos, t)</span>
+        </div>
+
+        <div class="animacao-container grande" id="container-animacao-replay" style="height:210px;"></div>
+
+        <!-- Controles do Player e Barra de Tempo -->
+        <div class="player-controls">
+          <div class="btn-group">
+            <button class="btn btn-primary" id="btn-play-pause" onclick="HistoricoApp.togglePlayPause()">▶ Reproduzir</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.reiniciarReplay()">⏮ Reiniciar</button>
+          </div>
+
+          <!-- Velocidades de Reprodução -->
+          <div class="btn-group">
+            <button class="btn btn-secondary btn-speed" onclick="HistoricoApp.setVelocidade(1)">1x</button>
+            <button class="btn btn-secondary btn-speed active" onclick="HistoricoApp.setVelocidade(5)">5x</button>
+            <button class="btn btn-secondary btn-speed" onclick="HistoricoApp.setVelocidade(10)">10x</button>
+            <button class="btn btn-secondary btn-speed" onclick="HistoricoApp.setVelocidade(60)">60x</button>
+          </div>
+
+          <div style="font-size:0.85rem; font-weight:700; margin-left:auto;">
+            Instante: <span id="lbl-tempo-replay">00:00</span> / <span id="lbl-tempo-total-replay">00:00</span>
+          </div>
+
+          <div class="timeline-container">
+            <input type="range" id="slider-timeline" class="timeline-slider" min="0" max="1000" value="0" oninput="HistoricoApp.onSliderScrub(this.value)">
+            <div class="timeline-markers" id="box-markers-timeline"></div>
+          </div>
+
+          <!-- Contadores Sincronizados com o Instante Replay -->
+          <div style="display:flex; gap:16px; font-size:0.8rem; font-weight:700; color:var(--text-muted); width:100%;">
+            <span>Fila: <strong id="rep-fila" style="color:var(--warning)">0</strong></span>
+            <span>Atendidos: <strong id="rep-atendidos" style="color:var(--btn-atendimento-bg)">0</strong></span>
+            <span>Chegadas: <strong id="rep-chegadas" style="color:var(--btn-chegada-bg)">0</strong></span>
+            <span>Anulados: <strong id="rep-anulados">0</strong></span>
+            <span>Vazão Recente: <strong id="rep-vazao">0,0</strong> p/min</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- KPIS CONSOLIDADOS -->
+      <div class="kpi-grid-relatorio">
+        <div class="hud-stat">
+          <span class="label">Total Chegadas (λ)</span>
+          <span class="value" id="kpi-cheg">0</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-lambda">λ = 0,00 p/min</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Total Atendidos (Vazão)</span>
+          <span class="value" id="kpi-atend">0</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-vazao-global">Vazão = 0,00 p/min</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Utilização (ρ)</span>
+          <span class="value" id="kpi-util">0,0%</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">ρ = λ / (c·μ)</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Fila Média (L)</span>
+          <span class="value" id="kpi-l">0,0</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pico">Pico: 0 pessoas</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Tempo de Espera Médio</span>
+          <span class="value" id="kpi-espera-media">00:00</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-espera-mediana">Mediana: 00:00</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Espera P90 / P95</span>
+          <span class="value" id="kpi-p95">00:00</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-p90">P90: 00:00</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Intervalo Médio Catraca</span>
+          <span class="value" id="kpi-int-media">0,0 s</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-int-cv">CV: 0,00</span>
+        </div>
+
+        <div class="hud-stat">
+          <span class="label">Ociosidade da Catraca</span>
+          <span class="value" id="kpi-ocioso">0,0%</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pausas">0 pausas longas</span>
+        </div>
+      </div>
+
+      <!-- Lei de Little & Modelo Teórico Erlang C -->
+      <div class="form-grid">
+        <div class="card">
+          <div class="card-title"><span>Lei de Little (L = λ · W)</span></div>
+          <div id="box-little-info" style="font-size:0.88rem; line-height:1.6;"></div>
+        </div>
+
+        <div class="card">
+          <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
+          <div id="box-teorico-info" style="font-size:0.88rem; line-height:1.6;"></div>
+        </div>
+      </div>
+
+      <!-- GRÁFICOS (CHART.JS) -->
+      <div class="chart-container">
+        <div class="card-title"><span>Curvas Acumuladas de Chegadas e Atendimentos</span></div>
+        <canvas id="chart-acumulado"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <div class="card-title"><span>Comprimento da Fila ao Longo do Tempo</span></div>
+        <canvas id="chart-fila-tempo"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <div class="card-title"><span>Chegadas e Atendimentos por Bloco (5 min)</span></div>
+        <canvas id="chart-blocos"></canvas>
+      </div>
+
+      <div class="chart-container">
+        <div class="card-title"><span>Distribuição dos Tempos de Espera (Histograma)</span></div>
+        <canvas id="chart-histograma"></canvas>
+      </div>
+
+      <!-- TABELA DETALHADA DE PESSOAS -->
+      <div class="card">
+        <div class="card-title" style="flex-wrap:wrap; gap:8px;">
+          <span>Tabela Detalhada de Pessoas</span>
+          <div style="display:flex; gap:8px;">
+            <input type="text" id="filtro-busca-tabela" placeholder="Buscar pessoa..." style="padding:4px 8px; font-size:0.85rem;" oninput="HistoricoApp.renderizarTabelaPessoas()">
+            <select id="filtro-status-tabela" style="padding:4px 8px; font-size:0.85rem;" onchange="HistoricoApp.renderizarTabelaPessoas()">
+              <option value="todos">Todos</option>
+              <option value="atendida">Atendidas</option>
+              <option value="anulada">Anuladas</option>
+              <option value="esperando">Na Fila</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-container">
+          <table>
+            <thead>
+              <tr>
+                <th onclick="HistoricoApp.ordenarTabela('pessoa')">Pessoa ⬍</th>
+                <th onclick="HistoricoApp.ordenarTabela('chegadaMs')">Chegada ⬍</th>
+                <th onclick="HistoricoApp.ordenarTabela('atendimentoMs')">Atendimento ⬍</th>
+                <th onclick="HistoricoApp.ordenarTabela('esperaMs')">Espera ⬍</th>
+                <th onclick="HistoricoApp.ordenarTabela('intervaloAtendimentoMs')">Intervalo ⬍</th>
+                <th>Disp. Chegada</th>
+                <th>Disp. Atendimento</th>
+                <th>Situação</th>
+              </tr>
+            </thead>
+            <tbody id="tabela-pessoas-corpo"></tbody>
+          </table>
+        </div>
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- Modais de Comparação e Importação -->
+  <div class="modal-backdrop" id="modal-comparar">
+    <div class="modal-dialog" style="max-width:850px;">
+      <div class="modal-title">
+        <span>Comparação de Sessões Lado a Lado</span>
+        <button class="btn btn-secondary" onclick="HistoricoApp.fecharModais()">✕</button>
+      </div>
+      <div id="comparar-checkboxes" style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;"></div>
+      <div class="table-container" style="max-height:400px;">
+        <table id="tabela-comparacao"></table>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop" id="modal-importar">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Importar Backup JSON de Sessão</span>
+        <button class="btn btn-secondary" onclick="HistoricoApp.fecharModais()">✕</button>
+      </div>
+      <input type="file" id="file-import-json" accept=".json">
+      <div class="btn-group" style="justify-content:flex-end; margin-top:10px;">
+        <button class="btn btn-secondary" onclick="HistoricoApp.fecharModais()">Cancelar</button>
+        <button class="btn btn-primary" onclick="HistoricoApp.processarImportacaoArquivo()">Importar</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="historico.js"></script>
+</body>
+</html>
+

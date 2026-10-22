@@ -1,0 +1,35 @@
+# Dependências
+node_modules/
+
+# Logs
+*.log
+npm-debug.log*
+
+# Variáveis de ambiente e credenciais
+.env
+.env.*
+
+# Dados coletados em campo (podem conter informações das sessões)
+dados/
+data/
+sessoes/
+*.sqlite
+*.db
+
+# Backups e exportações
+*.csv
+backup*.json
+
+# Arquivos do sistema operacional
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Editores e IDEs
+.vscode/
+.idea/
+
+# Arquivos temporários
+tmp/
+temp/
+*.tmp

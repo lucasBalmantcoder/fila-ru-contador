@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>Painel do Notebook - Fila RU</title>
+  <link rel="stylesheet" href="estilo.css">
+  <style>
+    /* Estilos do Painel de Projeção / Widescreen */
+    .dashboard-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 1024px) {
+      .dashboard-grid {
+        grid-template-columns: 2.5fr 1fr;
+      }
+    }
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+    }
+    @media (min-width: 640px) {
+      .kpi-row {
+        grid-template-columns: repeat(4, 1fr);
+      }
+    }
+    .badge-autor {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 0.72rem;
+      font-weight: 700;
+    }
+    .idle-warning-box {
+      display: none;
+      background: rgba(220, 38, 38, 0.12);
+      border: 2px solid var(--danger);
+      color: var(--danger);
+      padding: 10px 14px;
+      border-radius: 8px;
+      font-weight: 800;
+      animation: pulse-danger 1.5s infinite;
+      margin-bottom: 8px;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CABEÇALHO -->
+  <header>
+    <div class="brand">
+      <span>🍽️ Fila RU — Painel de Monitoramento</span>
+    </div>
+
+    <nav class="header-nav">
+      <a href="painel.html" class="active">Painel ao Vivo</a>
+      <a href="historico.html">Histórico & Análises</a>
+      <a href="celular.html" target="_blank">Abrir Celular ↗</a>
+    </nav>
+
+    <div class="header-status">
+      <span class="status-badge offline" id="badge-conexao">
+        <span class="status-dot"></span>
+        <span id="txt-conexao">Desconectado</span>
+      </span>
+      <button class="btn btn-secondary" onclick="PainelApp.toggleTheme()" style="padding:4px 8px;">🌓</button>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL (TELA LARGA) -->
+  <main>
+
+    <!-- Alerta de Ociosidade da Catraca com Fila -->
+    <div class="idle-warning-box" id="box-alerta-ociosidade">
+      ⚠️ ATENÇÃO: Nenhum atendimento confirmado há mais de <span id="lbl-segundos-ocioso">120</span> segundos com pessoas aguardando na fila!
+    </div>
+
+    <!-- Linha de KPIs ao Vivo -->
+    <div class="kpi-row">
+      <div class="hud-stat highlight-queue">
+        <span class="label">Pessoas na Fila</span>
+        <span class="value" id="kpi-fila">0</span>
+        <span style="font-size:0.75rem; color:var(--text-muted)">Pico: <span id="kpi-fila-max">0</span></span>
+      </div>
+
+      <div class="hud-stat">
+        <span class="label">Atendidos / Chegadas</span>
+        <span class="value">
+          <span id="kpi-atendidos" style="color:var(--btn-atendimento-bg)">0</span> /
+          <span id="kpi-chegadas" style="color:var(--btn-chegada-bg)">0</span>
+        </span>
+        <span style="font-size:0.75rem; color:var(--text-muted)">Anulados: <span id="kpi-anulados">0</span></span>
+      </div>
+
+      <div class="hud-stat">
+        <span class="label">Vazão Recente (5 min)</span>
+        <span class="value" id="kpi-vazao">0,0 <span style="font-size:0.8rem">p/min</span></span>
+        <span style="font-size:0.75rem; color:var(--text-muted)">Últ. Int: <span id="kpi-ultimo-int">-- s</span></span>
+      </div>
+
+      <div class="hud-stat" id="hud-timer-box">
+        <span class="label">Tempo Decorrido</span>
+        <span class="value" id="kpi-tempo">00:00:00</span>
+        <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-restante">Faltam 60:00</span>
+      </div>
+    </div>
+
+    <!-- Layout Dividido: Animação Grande e Painel Lateral -->
+    <div class="dashboard-grid">
+
+      <!-- Coluna Principal: Animação em Tamanho Grande para Projeção -->
+      <div style="display:flex; flex-direction:column; gap:12px;">
+        <div class="animacao-wrapper">
+          <div class="card-title">
+            <span>Visualização da Fila em Tempo Real</span>
+            <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Sincronizada em todos os aparelhos</span>
+          </div>
+          <div class="animacao-container grande" id="container-animacao-painel" style="height:220px;"></div>
+        </div>
+
+        <!-- Log dos Últimos Eventos Registrados -->
+        <div class="card">
+          <div class="card-title">
+            <span>Últimos Eventos Registrados</span>
+            <span style="font-size:0.75rem; color:var(--text-muted)">Auditoria colaborativa com autor</span>
+          </div>
+          <div class="table-container" style="max-height:220px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>#</th>
+                  <th>Horário</th>
+                  <th>Tipo</th>
+                  <th>Pessoa / Info</th>
+                  <th>Autor (Aparelho)</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-ultimos-eventos">
+                <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text-muted)">Nenhum evento registrado.</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- Log de Comandos Rejeitados -->
+        <div class="card" id="card-rejeitados" style="display:none;">
+          <div class="card-title" style="color:var(--danger)">
+            <span>Tentativas Rejeitadas pelo Servidor</span>
+          </div>
+          <div class="table-container" style="max-height:160px;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Horário</th>
+                  <th>Código</th>
+                  <th>Motivo</th>
+                  <th>Aparelho</th>
+                </tr>
+              </thead>
+              <tbody id="tabela-rejeitados"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <!-- Coluna Lateral: Conexão, QR Code, Aparelhos e Controle de Sessão -->
+      <div style="display:flex; flex-direction:column; gap:12px;">
+
+        <!-- Card de Conexão e PIN -->
+        <div class="card" style="text-align:center;">
+          <div class="card-title" style="justify-content:center;">
+            <span>Acesso dos Celulares</span>
+          </div>
+          <div style="margin: 6px 0;">
+            <img id="img-qrcode" alt="QR Code" style="width:180px; height:180px; border-radius:8px; border:1px solid var(--border-color); display:inline-block;">
+          </div>
+          <div style="font-size:0.88rem; font-weight:700; color:var(--text-muted);">
+            PIN DE ACESSO: <span style="font-size:1.6rem; color:var(--primary); font-weight:900;" id="txt-pin-display">----</span>
+          </div>
+          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;" id="txt-url-display">
+            http://192.168.137.1:3000
+          </div>
+        </div>
+
+        <!-- Aparelhos Conectados -->
+        <div class="card">
+          <div class="card-title">
+            <span>Aparelhos Conectados (<span id="lbl-qtd-aparelhos">0</span>)</span>
+          </div>
+          <div id="lista-aparelhos-painel" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto; font-size:0.85rem;">
+            <span style="color:var(--text-muted)">Nenhum celular conectado.</span>
+          </div>
+        </div>
+
+        <!-- Controles da Sessão -->
+        <div class="card">
+          <div class="card-title">
+            <span id="lbl-status-sessao-titulo">Controle da Sessão</span>
+          </div>
+
+          <div id="box-sessao-ativa-botoes" style="display:none;">
+            <p style="font-size:0.85rem; margin-bottom:10px;">
+              Sessão em andamento: <strong id="lbl-sessao-ativa-nome">Almoço</strong>
+            </p>
+            <button class="btn btn-danger" style="width:100%; padding:10px;" onclick="PainelApp.confirmarEncerramentoSessao()">
+              ⏹ Encerrar Sessão
+            </button>
+          </div>
+
+          <div id="box-sessao-iniciar-botoes">
+            <button class="btn btn-success" style="width:100%; padding:10px; margin-bottom:8px;" onclick="PainelApp.abrirModalIniciarSessao()">
+              ▶ Iniciar Nova Sessão
+            </button>
+            <button class="btn btn-secondary" style="width:100%; padding:8px;" onclick="PainelApp.simularCargaTeste()">
+              🎲 Simular Coleta de Teste (Carga)
+            </button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+  </main>
+
+  <!-- ====================================================================
+       MODAIS DO PAINEL
+       ==================================================================== -->
+
+  <!-- Modal: Iniciar Nova Sessão -->
+  <div class="modal-backdrop" id="modal-iniciar-sessao">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Configurar e Iniciar Observação</span>
+        <button class="btn btn-secondary" onclick="PainelApp.fecharModais()">✕</button>
+      </div>
+
+      <form onsubmit="event.preventDefault(); PainelApp.iniciarSessaoForm();">
+        <div class="form-grid">
+          <div class="form-group">
+            <label for="cfg-nome">Nome da Observação *</label>
+            <input type="text" id="cfg-nome" required value="Almoço RU - Quinta">
+          </div>
+          <div class="form-group">
+            <label for="cfg-local">Local / Campus *</label>
+            <input type="text" id="cfg-local" required value="RU Campus Santarém">
+          </div>
+          <div class="form-group">
+            <label for="cfg-duracao">Duração Prevista (minutos)</label>
+            <input type="number" id="cfg-duracao" min="1" value="60">
+          </div>
+          <div class="form-group">
+            <label for="cfg-servidores">Servidores / Catracas (c)</label>
+            <input type="number" id="cfg-servidores" min="1" value="1">
+          </div>
+          <div class="form-group">
+            <label for="cfg-bloco">Bloco de Agregação (minutos)</label>
+            <input type="number" id="cfg-bloco" min="1" value="5">
+          </div>
+          <div class="form-group">
+            <label for="cfg-pausa">Limiar de Pausa Longa (segundos)</label>
+            <input type="number" id="cfg-pausa" min="10" value="60">
+          </div>
+          <div class="form-group full-span">
+            <label for="cfg-obs">Observações (clima, cardápio, dia)</label>
+            <textarea id="cfg-obs" rows="2" placeholder="Ex: Dia nublado, atraso na catraca 1."></textarea>
+          </div>
+          <div class="form-group full-span" style="flex-direction:row; align-items:center; gap:8px;">
+            <input type="checkbox" id="cfg-teste" style="width:auto;">
+            <label for="cfg-teste" style="cursor:pointer;">Marcar como Sessão de Teste (oculta do histórico por padrão)</label>
+          </div>
+        </div>
+
+        <div class="btn-group" style="justify-content:flex-end; margin-top:12px;">
+          <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModais()">Cancelar</button>
+          <button type="submit" class="btn btn-success">▶ Iniciar Coleta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <script type="module" src="painel.js"></script>
+</body>
+</html>
+
