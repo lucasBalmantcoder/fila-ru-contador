@@ -15,7 +15,7 @@
     }
     @media (min-width: 1024px) {
       .dashboard-grid {
-        grid-template-columns: 2.5fr 1fr;
+        grid-template-columns: 2.6fr 1fr;
       }
     }
     .kpi-row {
@@ -47,6 +47,73 @@
       animation: pulse-danger 1.5s infinite;
       margin-bottom: 8px;
     }
+
+    /* Abas superiores do painel */
+    .panel-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 8px;
+    }
+    .panel-tab-btn {
+      background: transparent;
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 6px 14px;
+      border-radius: 8px;
+      font-weight: 700;
+      font-size: 0.85rem;
+      cursor: pointer;
+    }
+    .panel-tab-btn.active {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+
+    /* Matriz de Delegação */
+    .matriz-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+    }
+    .matriz-table th, .matriz-table td {
+      border: 1px solid var(--border-color);
+      padding: 6px 8px;
+      text-align: center;
+    }
+    .matriz-table th:first-child, .matriz-table td:first-child {
+      text-align: left;
+    }
+
+    /* Pré-visualização da Cadeia */
+    .cadeia-preview {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+      background: var(--bg-subtle);
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px solid var(--border-color);
+      margin: 8px 0;
+    }
+    .cadeia-item {
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 0.82rem;
+      color: #ffffff;
+    }
+    .cadeia-ponto {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      background: var(--bg-card);
+      border: 1px dashed var(--border-color);
+      padding: 2px 6px;
+      border-radius: 4px;
+    }
   </style>
 </head>
 <body>
@@ -60,6 +127,7 @@
     <nav class="header-nav">
       <a href="painel.html" class="active">Painel ao Vivo</a>
       <a href="historico.html">Histórico & Análises</a>
+      <a href="pontos.html" target="_blank">QR Codes dos Pontos 🖨</a>
       <a href="celular.html" target="_blank">Abrir Celular ↗</a>
     </nav>
 
@@ -72,24 +140,24 @@
     </div>
   </header>
 
-  <!-- CONTEÚDO PRINCIPAL (TELA LARGA) -->
   <main>
 
-    <!-- Alerta de Ociosidade da Catraca com Fila -->
+    <!-- Alertas Operacionais (Ociosidade e Pontos Descobertos) -->
     <div class="idle-warning-box" id="box-alerta-ociosidade">
-      ⚠️ ATENÇÃO: Nenhum atendimento confirmado há mais de <span id="lbl-segundos-ocioso">120</span> segundos com pessoas aguardando na fila!
+      ⚠️ ATENÇÃO: Nenhum registro confirmado há mais de <span id="lbl-segundos-ocioso">120</span> segundos com pessoas aguardando na fila!
     </div>
+    <div id="box-alerta-pontos-descobertos" style="display:none; background:rgba(234,179,8,0.12); border:1px solid var(--warning); color:var(--warning); padding:8px 12px; border-radius:8px; font-weight:700; margin-bottom:8px;"></div>
 
     <!-- Linha de KPIs ao Vivo -->
     <div class="kpi-row">
       <div class="hud-stat highlight-queue">
-        <span class="label">Pessoas na Fila</span>
-        <span class="value" id="kpi-fila">0</span>
+        <span class="label">Presentes no Restaurante</span>
+        <span class="value" id="kpi-presentes">0</span>
         <span style="font-size:0.75rem; color:var(--text-muted)">Pico: <span id="kpi-fila-max">0</span></span>
       </div>
 
       <div class="hud-stat">
-        <span class="label">Atendidos / Chegadas</span>
+        <span class="label">Saídas / Chegadas</span>
         <span class="value">
           <span id="kpi-atendidos" style="color:var(--btn-atendimento-bg)">0</span> /
           <span id="kpi-chegadas" style="color:var(--btn-chegada-bg)">0</span>
@@ -106,69 +174,166 @@
       <div class="hud-stat" id="hud-timer-box">
         <span class="label">Tempo Decorrido</span>
         <span class="value" id="kpi-tempo">00:00:00</span>
-        <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-restante">Faltam 60:00</span>
+        <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-restante">Aguardando Início</span>
       </div>
     </div>
 
-    <!-- Layout Dividido: Animação Grande e Painel Lateral -->
+    <!-- Abas de Visualização do Painel -->
+    <div class="panel-tabs">
+      <button class="panel-tab-btn active" id="tab-btn-animacao" onclick="PainelApp.trocarAba('animacao')">🎬 Visualização do Percurso</button>
+      <button class="panel-tab-btn" id="tab-btn-zonas" onclick="PainelApp.trocarAba('zonas')">⚙️ Configuração das Zonas</button>
+      <button class="panel-tab-btn" id="tab-btn-delegacao" onclick="PainelApp.trocarAba('delegacao')">📱 Aparelhos e Pontos</button>
+      <button class="panel-tab-btn" id="tab-btn-auditoria" onclick="PainelApp.trocarAba('auditoria')">📜 Log e Auditoria</button>
+    </div>
+
+    <!-- Layout Dividido -->
     <div class="dashboard-grid">
 
-      <!-- Coluna Principal: Animação em Tamanho Grande para Projeção -->
+      <!-- Coluna Principal (Conteúdo da Aba) -->
       <div style="display:flex; flex-direction:column; gap:12px;">
-        <div class="animacao-wrapper">
-          <div class="card-title">
-            <span>Visualização da Fila em Tempo Real</span>
-            <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Sincronizada em todos os aparelhos</span>
-          </div>
-          <div class="animacao-container grande" id="container-animacao-painel" style="height:220px;"></div>
-        </div>
 
-        <!-- Log dos Últimos Eventos Registrados -->
-        <div class="card">
-          <div class="card-title">
-            <span>Últimos Eventos Registrados</span>
-            <span style="font-size:0.75rem; color:var(--text-muted)">Auditoria colaborativa com autor</span>
-          </div>
-          <div class="table-container" style="max-height:220px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>#</th>
-                  <th>Horário</th>
-                  <th>Tipo</th>
-                  <th>Pessoa / Info</th>
-                  <th>Autor (Aparelho)</th>
-                </tr>
-              </thead>
-              <tbody id="tabela-ultimos-eventos">
-                <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text-muted)">Nenhum evento registrado.</td></tr>
-              </tbody>
-            </table>
+        <!-- ABA 1: ANIMAÇÃO DO PERCURSO AO VIVO -->
+        <div id="secao-aba-animacao">
+          <div class="animacao-wrapper">
+            <div class="card-title">
+              <span>Percurso Completo dos Alunos em Tempo Real</span>
+              <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Sincronização em tempo real via WebSocket</span>
+            </div>
+            <div class="animacao-container grande" id="container-animacao-painel" style="height:250px;"></div>
           </div>
         </div>
 
-        <!-- Log de Comandos Rejeitados -->
-        <div class="card" id="card-rejeitados" style="display:none;">
-          <div class="card-title" style="color:var(--danger)">
-            <span>Tentativas Rejeitadas pelo Servidor</span>
-          </div>
-          <div class="table-container" style="max-height:160px;">
-            <table>
-              <thead>
-                <tr>
-                  <th>Horário</th>
-                  <th>Código</th>
-                  <th>Motivo</th>
-                  <th>Aparelho</th>
-                </tr>
-              </thead>
-              <tbody id="tabela-rejeitados"></tbody>
-            </table>
+        <!-- ABA 2: CONFIGURAÇÃO DAS ZONAS (TRAVADA APÓS INÍCIO) -->
+        <div id="secao-aba-zonas" style="display:none;">
+          <div class="card">
+            <div class="card-title">
+              <span>Configuração das Zonas do Restaurante</span>
+              <span id="badge-zonas-travadas" class="status-badge" style="display:none; background:rgba(234,179,8,0.15); color:var(--warning); border:1px solid var(--warning);">
+                🔒 Configuração Travada na Sessão Ativa
+              </span>
+            </div>
+
+            <!-- Seletor de Modelos (Presets) -->
+            <div style="display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:12px;">
+              <label for="sel-preset-zonas" style="font-weight:700; font-size:0.85rem;">Modelo Predefinido:</label>
+              <select id="sel-preset-zonas" onchange="PainelApp.aplicarPresetSelecionado(this.value)" style="flex:1; max-width:300px;">
+                <option value="completo">Completo (Fila, Atendimento, Mesas)</option>
+                <option value="fila_atendimento">Fila + Atendimento</option>
+                <option value="somente_fila">Somente fila</option>
+              </select>
+              <button class="btn btn-secondary" id="btn-salvar-modelo" onclick="PainelApp.abrirSalvarModelo()">💾 Salvar Modelo Atual</button>
+              <button class="btn btn-primary" id="btn-add-zona" onclick="PainelApp.abrirModalAddZona()">+ Adicionar Zona Personalizada</button>
+            </div>
+
+            <!-- Tabela de Zonas -->
+            <div class="table-container" style="margin-bottom:12px;">
+              <table style="width:100%;">
+                <thead>
+                  <tr>
+                    <th>Ordem</th>
+                    <th>Nome da Zona</th>
+                    <th>Cor</th>
+                    <th>Modo</th>
+                    <th>Capacidade</th>
+                    <th>Habilitada</th>
+                    <th>Ações</th>
+                  </tr>
+                </thead>
+                <tbody id="tabela-zonas-config"></tbody>
+              </table>
+            </div>
+
+            <!-- Pré-visualização da Cadeia e Pontos -->
+            <div style="font-size:0.85rem; font-weight:700; margin-top:8px;">Pré-visualização da Cadeia Resultante:</div>
+            <div class="cadeia-preview" id="preview-cadeia-pontos"></div>
           </div>
         </div>
+
+        <!-- ABA 3: DELEGAÇÃO DE APARELHOS POR PONTO -->
+        <div id="secao-aba-delegacao" style="display:none;">
+          <div class="card">
+            <div class="card-title">
+              <span>Matriz de Delegação: Aparelhos × Pontos de Verificação</span>
+              <div class="btn-group">
+                <button class="btn btn-secondary" onclick="PainelApp.distribuicaoAutomaticaPontos()">⚡ Distribuição Automática</button>
+                <button class="btn btn-secondary" onclick="PainelApp.operadorUnicoPontos()">👤 Operador Único</button>
+                <a href="pontos.html" target="_blank" class="btn btn-secondary">🖨 QR Codes dos Pontos</a>
+              </div>
+            </div>
+
+            <p style="font-size:0.82rem; color:var(--text-muted); margin:0 0 10px 0;">
+              Marque os pontos de verificação que cada aparelho conectado é responsável por registrar.
+              Alterações entram em vigor imediatamente durante a coleta.
+            </p>
+
+            <div class="table-container">
+              <table class="matriz-table">
+                <thead id="matriz-cabecalho-pontos"></thead>
+                <tbody id="matriz-corpo-aparelhos"></tbody>
+              </table>
+            </div>
+
+            <!-- Cobertura dos Pontos -->
+            <div style="margin-top:14px; border-top:1px solid var(--border-color); padding-top:10px;">
+              <div style="font-weight:700; font-size:0.85rem; margin-bottom:6px;">Cobertura da Sessão por Ponto (% de tempo com avaliador conectado):</div>
+              <div id="lista-cobertura-pontos" style="display:flex; gap:12px; flex-wrap:wrap; font-size:0.8rem;"></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- ABA 4: LOG E AUDITORIA -->
+        <div id="secao-aba-auditoria" style="display:none;">
+          <!-- Log de Eventos -->
+          <div class="card" style="margin-bottom:12px;">
+            <div class="card-title">
+              <span>Últimos Eventos Registrados</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)">Auditoria com autor e tEfetivo</span>
+            </div>
+            <div class="table-container" style="max-height:240px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>#</th>
+                    <th>Horário</th>
+                    <th>Tipo</th>
+                    <th>Ponto</th>
+                    <th>Pessoa / Info</th>
+                    <th>Autor</th>
+                    <th>Inversão Corrigida</th>
+                  </tr>
+                </thead>
+                <tbody id="tabela-ultimos-eventos">
+                  <tr><td colspan="7" style="text-align:center; padding:15px; color:var(--text-muted)">Nenhum evento registrado.</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- Log de Rejeitados -->
+          <div class="card" id="card-rejeitados">
+            <div class="card-title" style="color:var(--danger)">
+              <span>Comandos Rejeitados pelo Servidor</span>
+            </div>
+            <div class="table-container" style="max-height:160px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Horário</th>
+                    <th>Código</th>
+                    <th>Ponto</th>
+                    <th>Motivo</th>
+                    <th>Aparelho</th>
+                  </tr>
+                </thead>
+                <tbody id="tabela-rejeitados"></tbody>
+              </table>
+            </div>
+          </div>
+        </div>
+
       </div>
 
-      <!-- Coluna Lateral: Conexão, QR Code, Aparelhos e Controle de Sessão -->
+      <!-- Coluna Lateral: Acesso, Aparelhos Conectados e Sessão -->
       <div style="display:flex; flex-direction:column; gap:12px;">
 
         <!-- Card de Conexão e PIN -->
@@ -177,12 +342,12 @@
             <span>Acesso dos Celulares</span>
           </div>
           <div style="margin: 6px 0;">
-            <img id="img-qrcode" alt="QR Code" style="width:180px; height:180px; border-radius:8px; border:1px solid var(--border-color); display:inline-block;">
+            <img id="img-qrcode" alt="QR Code" style="width:160px; height:160px; border-radius:8px; border:1px solid var(--border-color); display:inline-block;">
           </div>
-          <div style="font-size:0.88rem; font-weight:700; color:var(--text-muted);">
+          <div style="font-size:0.85rem; font-weight:700; color:var(--text-muted);">
             PIN DE ACESSO: <span style="font-size:1.6rem; color:var(--primary); font-weight:900;" id="txt-pin-display">----</span>
           </div>
-          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;" id="txt-url-display">
+          <div style="font-size:0.78rem; color:var(--text-muted); margin-top:4px;" id="txt-url-display">
             http://192.168.137.1:3000
           </div>
         </div>
@@ -192,7 +357,7 @@
           <div class="card-title">
             <span>Aparelhos Conectados (<span id="lbl-qtd-aparelhos">0</span>)</span>
           </div>
-          <div id="lista-aparelhos-painel" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto; font-size:0.85rem;">
+          <div id="lista-aparelhos-painel" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto; font-size:0.82rem;">
             <span style="color:var(--text-muted)">Nenhum celular conectado.</span>
           </div>
         </div>
@@ -200,11 +365,11 @@
         <!-- Controles da Sessão -->
         <div class="card">
           <div class="card-title">
-            <span id="lbl-status-sessao-titulo">Controle da Sessão</span>
+            <span>Controle da Sessão</span>
           </div>
 
           <div id="box-sessao-ativa-botoes" style="display:none;">
-            <p style="font-size:0.85rem; margin-bottom:10px;">
+            <p style="font-size:0.82rem; margin-bottom:8px;">
               Sessão em andamento: <strong id="lbl-sessao-ativa-nome">Almoço</strong>
             </p>
             <button class="btn btn-danger" style="width:100%; padding:10px;" onclick="PainelApp.confirmarEncerramentoSessao()">
@@ -217,7 +382,7 @@
               ▶ Iniciar Nova Sessão
             </button>
             <button class="btn btn-secondary" style="width:100%; padding:8px;" onclick="PainelApp.simularCargaTeste()">
-              🎲 Simular Coleta de Teste (Carga)
+              🎲 Simular Coleta Multi-Zona
             </button>
           </div>
         </div>
@@ -229,14 +394,14 @@
   </main>
 
   <!-- ====================================================================
-       MODAIS DO PAINEL
+       MODAIS
        ==================================================================== -->
 
-  <!-- Modal: Iniciar Nova Sessão -->
+  <!-- Modal Iniciar Sessão -->
   <div class="modal-backdrop" id="modal-iniciar-sessao">
     <div class="modal-dialog">
       <div class="modal-title">
-        <span>Configurar e Iniciar Observação</span>
+        <span>Iniciar Nova Observação do RU</span>
         <button class="btn btn-secondary" onclick="PainelApp.fecharModais()">✕</button>
       </div>
 
@@ -244,41 +409,89 @@
         <div class="form-grid">
           <div class="form-group">
             <label for="cfg-nome">Nome da Observação *</label>
-            <input type="text" id="cfg-nome" required value="Almoço RU - Quinta">
+            <input type="text" id="cfg-nome" required value="Almoço RU - Quinta-feira">
           </div>
           <div class="form-group">
             <label for="cfg-local">Local / Campus *</label>
-            <input type="text" id="cfg-local" required value="RU Campus Santarém">
+            <input type="text" id="cfg-local" required value="RU Central">
           </div>
           <div class="form-group">
-            <label for="cfg-duracao">Duração Prevista (minutos)</label>
-            <input type="number" id="cfg-duracao" min="1" value="60">
+            <label for="cfg-duracao">Duração Prevista (min)</label>
+            <input type="number" id="cfg-duracao" min="5" max="300" value="60">
           </div>
           <div class="form-group">
-            <label for="cfg-servidores">Servidores / Catracas (c)</label>
-            <input type="number" id="cfg-servidores" min="1" value="1">
+            <label for="cfg-servidores">Servidores na Catraca (c)</label>
+            <input type="number" id="cfg-servidores" min="1" max="10" value="1">
           </div>
           <div class="form-group">
-            <label for="cfg-bloco">Bloco de Agregação (minutos)</label>
-            <input type="number" id="cfg-bloco" min="1" value="5">
+            <label for="cfg-janela">Janela de Inversão (seg)</label>
+            <input type="number" id="cfg-janela" min="5" max="60" value="20">
           </div>
           <div class="form-group">
-            <label for="cfg-pausa">Limiar de Pausa Longa (segundos)</label>
-            <input type="number" id="cfg-pausa" min="10" value="60">
-          </div>
-          <div class="form-group full-span">
-            <label for="cfg-obs">Observações (clima, cardápio, dia)</label>
-            <textarea id="cfg-obs" rows="2" placeholder="Ex: Dia nublado, atraso na catraca 1."></textarea>
-          </div>
-          <div class="form-group full-span" style="flex-direction:row; align-items:center; gap:8px;">
-            <input type="checkbox" id="cfg-teste" style="width:auto;">
-            <label for="cfg-teste" style="cursor:pointer;">Marcar como Sessão de Teste (oculta do histórico por padrão)</label>
+            <label for="cfg-alerta-ocioso">Alerta Fila Ociosa (seg)</label>
+            <input type="number" id="cfg-alerta-ocioso" min="10" max="300" value="120">
           </div>
         </div>
 
-        <div class="btn-group" style="justify-content:flex-end; margin-top:12px;">
+        <div class="form-group" style="margin-top:8px;">
+          <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;">
+            <input type="checkbox" id="cfg-auto-atribuir" checked>
+            <span>Atribuir pontos livres automaticamente a novos aparelhos que se conectarem</span>
+          </label>
+        </div>
+
+        <div style="margin-top:10px; font-size:0.82rem; color:var(--text-muted);">
+          ℹ️ A configuração atual de zonas (definida na aba "Zonas") será travada para esta sessão.
+        </div>
+
+        <div class="btn-group" style="justify-content:flex-end; margin-top:14px;">
           <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModais()">Cancelar</button>
-          <button type="submit" class="btn btn-success">▶ Iniciar Coleta</button>
+          <button type="submit" class="btn btn-primary">Iniciar Coleta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Modal Adicionar Zona Personalizada -->
+  <div class="modal-backdrop" id="modal-add-zona">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Adicionar Zona Personalizada</span>
+        <button class="btn btn-secondary" onclick="PainelApp.fecharModais()">✕</button>
+      </div>
+
+      <form onsubmit="event.preventDefault(); PainelApp.confirmarAddZona();">
+        <div class="form-group" style="margin-bottom:8px;">
+          <label for="add-zona-nome">Nome da Zona *</label>
+          <input type="text" id="add-zona-nome" required placeholder="Ex: Devolução de bandejas, Caixa, Bebedouro">
+        </div>
+        <div class="form-grid" style="margin-bottom:8px;">
+          <div class="form-group">
+            <label for="add-zona-cor">Cor</label>
+            <input type="color" id="add-zona-cor" value="#8b5cf6" style="height:38px; padding:2px;">
+          </div>
+          <div class="form-group">
+            <label for="add-zona-modo">Modo da Zona</label>
+            <select id="add-zona-modo">
+              <option value="fifo">FIFO (Fila ordenada, pessoas identificadas)</option>
+              <option value="contagem">Contagem (Capacidade/espaço, identidade estimada)</option>
+            </select>
+          </div>
+        </div>
+        <div class="form-grid" style="margin-bottom:8px;">
+          <div class="form-group">
+            <label for="add-zona-pos">Posição na Cadeia</label>
+            <select id="add-zona-pos"></select>
+          </div>
+          <div class="form-group">
+            <label for="add-zona-cap">Capacidade (Opcional)</label>
+            <input type="number" id="add-zona-cap" placeholder="Ex: 50" min="1">
+          </div>
+        </div>
+
+        <div class="btn-group" style="justify-content:flex-end; margin-top:14px;">
+          <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModais()">Cancelar</button>
+          <button type="submit" class="btn btn-primary">Adicionar Zona</button>
         </div>
       </form>
     </div>
@@ -287,4 +500,3 @@
   <script type="module" src="painel.js"></script>
 </body>
 </html>
-

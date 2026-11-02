@@ -1,25 +1,35 @@
 /**
  * public/animacao.js
- * Renderizador de animação fiel da fila em SVG com transições CSS.
- * Layout adaptável (paisagem/horizontal e retrato/vertical), acessibilidade visual
- * (cores, formas, números), escalonamento progressivo e agregação +N para filas longas.
+ * Renderizador visual de animação do percurso do restaurante universitário em SVG.
+ * Suporta o layout temático "restaurante" (Origem -> Fila Vermelha -> Catraca -> Atendimento Verde -> Mesas Rosa -> Saída Laranja)
+ * e layout em cadeia automático para configurações personalizadas.
+ * Acessibilidade com formas geométricas distintas por zona, exibição de ocupação com capacidade,
+ * avaliadores atribuídos por ponto, ausência de números em zonas de contagem e agregação +N.
  */
 
 export class AnimadorFila {
   constructor(containerId, opcoes = {}) {
     this.container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
-    this.duracaoChegada = opcoes.duracaoChegada || 0.8;
-    this.duracaoAtendimento = opcoes.duracaoAtendimento || 0.6;
+    this.duracaoTransicao = opcoes.duracaoTransicao || 0.6;
     this.habilitada = true;
 
     this.estadoAtual = null;
+    this.configAtual = null;
+    this.atribuicoes = {};
+    this.aparelhosConectados = new Map(); // id -> aparelho
     this.abaEmSegundoPlano = false;
-    this.timerPulsoCatraca = null;
 
     this.svg = null;
+    this.camadaFundo = null;
     this.camadaEstacoes = null;
+    this.camadaConexoes = null;
+    this.camadaPontos = null;
     this.camadaPessoas = null;
-    this.camadaIndicador = null;
+    this.camadaIndicadores = null;
+
+    this.ultimoRegistroPorPonto = {}; // pontoId -> timestamp
+    this.timerAlertasOciosidade = null;
+    this.limiarAlertaOciosoSeg = 120;
 
     this.iniciar();
   }
@@ -28,148 +38,467 @@ export class AnimadorFila {
     if (!this.container) return;
     this.container.innerHTML = '';
 
-    // Criação do elemento SVG raiz
+    // Elemento SVG raiz
     this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    this.svg.setAttribute('class', 'fila-svg');
-    this.svg.setAttribute('viewBox', '0 0 800 200');
+    this.svg.setAttribute('class', 'fila-svg percurso-svg');
+    this.svg.setAttribute('viewBox', '0 0 1000 320');
     this.svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
 
+    this.camadaFundo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaConexoes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     this.camadaEstacoes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaPontos = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     this.camadaPessoas = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    this.camadaIndicador = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaIndicadores = document.createElementNS('http://www.w3.org/2000/svg', 'g');
 
+    this.svg.appendChild(this.camadaFundo);
+    this.svg.appendChild(this.camadaConexoes);
     this.svg.appendChild(this.camadaEstacoes);
+    this.svg.appendChild(this.camadaPontos);
     this.svg.appendChild(this.camadaPessoas);
-    this.svg.appendChild(this.camadaIndicador);
+    this.svg.appendChild(this.camadaIndicadores);
     this.container.appendChild(this.svg);
 
-    this.desenharEstacoes();
-
-    // Tratamento de aba em segundo plano
     document.addEventListener('visibilitychange', () => {
       this.abaEmSegundoPlano = document.hidden;
       if (!this.abaEmSegundoPlano && this.estadoAtual) {
-        // Ao voltar do segundo plano, aplica o estado atual diretamente sem fila de transições
         this.renderizarEstado(this.estadoAtual, false);
       }
     });
 
-    // Monitoramento de pulso da catraca (> 10s sem confirmação)
-    this.timerPulsoCatraca = setInterval(() => {
-      this.verificarPulsoCatraca();
+    this.timerAlertasOciosidade = setInterval(() => {
+      this.verificarAlertasOciosidade();
     }, 1000);
   }
 
-  desenharEstacoes() {
-    this.camadaEstacoes.innerHTML = '';
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
-
-    if (isRetrato) {
-      this.svg.setAttribute('viewBox', '0 0 320 600');
-
-      // Caixa Atendimento (Topo)
-      this.desenharCaixa(90, 20, 140, 55, 'Atendimento', '🍽️');
-      // Caixa Catraca
-      this.desenharCaixa(90, 100, 140, 55, 'Catraca', '🛑');
-      // Origem das chegadas (Base)
-      this.desenharCaixa(90, 520, 140, 45, 'Origem', '🚪');
-    } else {
-      this.svg.setAttribute('viewBox', '0 0 850 200');
-
-      // Caixa Atendimento (Esquerda)
-      this.desenharCaixa(20, 40, 110, 80, 'Atendimento', '🍽️');
-      // Caixa Catraca (Ao lado)
-      this.desenharCaixa(155, 40, 110, 80, 'Catraca', '🛑');
-      // Origem das chegadas (Abaixo e à direita)
-      this.desenharCaixa(700, 135, 120, 45, 'Origem', '🚪');
+  definirAtribuicoes(atribuicoes = {}, aparelhos = []) {
+    this.atribuicoes = atribuicoes || {};
+    this.aparelhosConectados.clear();
+    for (const a of aparelhos) {
+      this.aparelhosConectados.set(a.id, a);
+    }
+    if (this.estadoAtual) {
+      this.desenharEstruturaPercurso();
     }
   }
 
-  desenharCaixa(x, y, w, h, label, icone) {
+  ehLayoutRestaurantePadrao(zonas) {
+    if (!Array.isArray(zonas) || zonas.length !== 3) return false;
+    const ids = zonas.map(z => z.id).join(',');
+    const hab = zonas.every(z => z.habilitada !== false);
+    return ids === 'z1,z2,z3' && hab;
+  }
+
+  desenharEstruturaPercurso() {
+    this.camadaEstacoes.innerHTML = '';
+    this.camadaConexoes.innerHTML = '';
+    this.camadaPontos.innerHTML = '';
+
+    const cfg = this.configAtual || this.estadoAtual?.config;
+    const zonas = (cfg?.zonas || []).filter(z => z.habilitada !== false);
+    const pontos = cfg?.pontos || [];
+    const ehPadrao = this.ehLayoutRestaurantePadrao(zonas);
+
+    if (ehPadrao) {
+      this.desenharLayoutRestaurante(zonas, pontos);
+    } else {
+      this.desenharLayoutCadeia(zonas, pontos);
+    }
+  }
+
+  desenharLayoutRestaurante(zonas, pontos) {
+    this.svg.setAttribute('viewBox', '0 0 1000 320');
+
+    // 1. Origem: Pessoas Novas (À direita)
+    this.desenharCaixaEstacao(840, 40, 130, 90, 'Pessoas novas', 'origem', '#8b5cf6', 'origem', null);
+
+    // 2. Z1: Fila Inicial (Vermelho, trilha estendida da direita até a catraca)
+    const ocupZ1 = this.estadoAtual?.zonas?.z1?.ocupacao || 0;
+    this.desenharCaixaEstacao(510, 40, 290, 90, 'Z1: Fila inicial', 'z1', '#dc2626', 'fifo', ocupZ1, null);
+
+    // P1: Catraca (entre Z1 e Z2)
+    this.desenharMarcadorPonto(470, 85, pontos.find(p => p.id === 'z1->z2'), 'P1: Catraca');
+
+    // 3. Z2: Atendimento (Verde, caixa de servir à esquerda da catraca)
+    const ocupZ2 = this.estadoAtual?.zonas?.z2?.ocupacao || 0;
+    this.desenharCaixaEstacao(240, 40, 190, 90, 'Z2: Atendimento', 'z2', '#16a34a', 'fifo', ocupZ2, null);
+
+    // P2: Saída do Atendimento (entre Z2 e Z3)
+    this.desenharMarcadorPonto(200, 85, pontos.find(p => p.id === 'z2->z3'), 'P2: Saída atend.');
+
+    // 4. Z3: Mesas (Rosa, área de refeição)
+    const capZ3 = zonas.find(z => z.id === 'z3')?.capacidade || 120;
+    const ocupZ3 = this.estadoAtual?.zonas?.z3?.ocupacao || 0;
+    this.desenharCaixaEstacao(40, 40, 130, 150, 'Z3: Mesas', 'z3', '#ec4899', 'contagem', ocupZ3, capZ3);
+
+    // P3: Saída das Mesas
+    this.desenharMarcadorPonto(105, 220, pontos.find(p => p.id === 'z3->saida'), 'P3: Saída mesas');
+
+    // 5. Saída: Sumidouro (Abaixo das mesas)
+    this.desenharCaixaEstacao(40, 250, 130, 50, 'Saída (Sumidouro)', 'saida', '#f97316', 'saida', null);
+
+    // P0: Ponto de Chegada (entre Origem e Z1)
+    this.desenharMarcadorPonto(815, 85, pontos.find(p => p.id === 'origem->z1'), 'P0: Chegada');
+  }
+
+  desenharLayoutCadeia(zonas, pontos) {
+    const totalEstacoes = zonas.length + 2; // Origem + Zonas + Saída
+    const larguraView = Math.max(1000, totalEstacoes * 180);
+    this.svg.setAttribute('viewBox', `0 0 ${larguraView} 280`);
+
+    const espacamento = (larguraView - 40) / totalEstacoes;
+
+    // Origem
+    this.desenharCaixaEstacao(20, 80, 130, 90, 'Origem', 'origem', '#8b5cf6', 'origem', null);
+
+    // Zonas
+    for (let i = 0; i < zonas.length; i++) {
+      const z = zonas[i];
+      const x = 20 + (i + 1) * espacamento;
+      const ocup = this.estadoAtual?.zonas?.[z.id]?.ocupacao || 0;
+      this.desenharCaixaEstacao(x, 80, Math.min(espacamento - 30, 200), 90, z.nome, z.id, z.cor, z.modo, ocup, z.capacidade);
+
+      // Ponto anterior
+      const ptId = (i === 0) ? `origem->${z.id}` : `${zonas[i - 1].id}->${z.id}`;
+      const pt = pontos.find(p => p.id === ptId);
+      this.desenharMarcadorPonto(x - 15, 125, pt, pt?.nome || `P${i}`);
+    }
+
+    // Saída
+    const xSaida = 20 + (zonas.length + 1) * espacamento;
+    this.desenharCaixaEstacao(xSaida, 80, 130, 90, 'Saída', 'saida', '#f97316', 'saida', null);
+
+    const ultZona = zonas[zonas.length - 1];
+    const ptFinal = pontos.find(p => p.id === `${ultZona.id}->saida`);
+    this.desenharMarcadorPonto(xSaida - 15, 125, ptFinal, ptFinal?.nome || `P${zonas.length}`);
+  }
+
+  desenharCaixaEstacao(x, y, w, h, titulo, zonaId, cor, modo, ocupacao = null, capacidade = null) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', `estacao-box estacao-${zonaId}`);
+    g.setAttribute('data-zona', zonaId);
+
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     rect.setAttribute('x', x);
     rect.setAttribute('y', y);
     rect.setAttribute('width', w);
     rect.setAttribute('height', h);
-    rect.setAttribute('class', 'box-estacao');
+    rect.setAttribute('rx', modo === 'contagem' ? 12 : 6);
+    rect.setAttribute('fill', 'var(--bg-card)');
+    rect.setAttribute('stroke', cor);
+    rect.setAttribute('stroke-width', '2');
+    rect.setAttribute('stroke-dasharray', modo === 'contagem' ? '4 3' : 'none');
 
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', x + w / 2);
-    text.setAttribute('y', y + h / 2 + 5);
-    text.setAttribute('class', 'box-estacao-label');
-    text.textContent = `${icone} ${label}`;
+    // Título da Estação
+    const txtTitulo = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txtTitulo.setAttribute('x', x + 10);
+    txtTitulo.setAttribute('y', y + 20);
+    txtTitulo.setAttribute('fill', cor);
+    txtTitulo.setAttribute('font-size', '12px');
+    txtTitulo.setAttribute('font-weight', '700');
+    txtTitulo.textContent = titulo;
 
-    this.camadaEstacoes.appendChild(rect);
-    this.camadaEstacoes.appendChild(text);
-  }
+    g.appendChild(rect);
+    g.appendChild(txtTitulo);
 
-  obterPosicaoSlot(indice, totalVisiveis, isRetrato) {
-    if (isRetrato) {
-      // Retrato: vertical de cima para baixo
-      if (indice === 0) {
-        // Catraca
-        return { x: 160, y: 127 };
-      }
-      // Fila abaixo da catraca
-      const yBase = 185;
-      const espacamento = Math.min(32, 320 / Math.max(1, totalVisiveis));
-      return { x: 160, y: yBase + (indice - 1) * espacamento };
-    } else {
-      // Paisagem: horizontal da esquerda para a direita
-      if (indice === 0) {
-        // Catraca
-        return { x: 210, y: 80 };
-      }
-      // Fila à direita da catraca
-      const xBase = 295;
-      const espacamento = Math.min(42, 480 / Math.max(1, totalVisiveis));
-      return { x: xBase + (indice - 1) * espacamento, y: 80 };
+    // Contador de ocupação e capacidade
+    if (ocupacao !== null) {
+      const txtOcup = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      txtOcup.setAttribute('x', x + w - 10);
+      txtOcup.setAttribute('y', y + 20);
+      txtOcup.setAttribute('text-anchor', 'end');
+      txtOcup.setAttribute('fill', 'var(--text-muted)');
+      txtOcup.setAttribute('font-size', '11px');
+      txtOcup.setAttribute('font-weight', '600');
+      txtOcup.textContent = capacidade ? `${ocupacao}/${capacidade}` : `${ocupacao}`;
+      g.appendChild(txtOcup);
     }
+
+    this.camadaEstacoes.appendChild(g);
   }
 
-  obterPosicaoOrigem(isRetrato) {
-    return isRetrato ? { x: 160, y: 542 } : { x: 760, y: 157 };
+  desenharMarcadorPonto(cx, cy, pontoObj, rotuloPadrao) {
+    if (!pontoObj) return;
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'marcador-ponto');
+    g.setAttribute('data-ponto', pontoObj.id);
+
+    // Identificar avaliador atribuído
+    const aparelhosAtribuidos = [];
+    for (const [dispId, listaPontos] of Object.entries(this.atribuicoes)) {
+      if (Array.isArray(listaPontos) && listaPontos.includes(pontoObj.id)) {
+        const a = this.aparelhosConectados.get(dispId);
+        aparelhosAtribuidos.push(a ? a.nome : dispId);
+      }
+    }
+
+    const temAparelho = aparelhosAtribuidos.length > 0;
+    const corPonto = temAparelho ? '#2563eb' : '#eab308';
+
+    // Círculo central do checkpoint
+    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    circle.setAttribute('cx', cx);
+    circle.setAttribute('cy', cy);
+    circle.setAttribute('r', 10);
+    circle.setAttribute('fill', corPonto);
+    circle.setAttribute('stroke', '#ffffff');
+    circle.setAttribute('stroke-width', '2');
+
+    // Rótulo do ponto
+    const txtNome = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txtNome.setAttribute('x', cx);
+    txtNome.setAttribute('y', cy - 14);
+    txtNome.setAttribute('text-anchor', 'middle');
+    txtNome.setAttribute('fill', 'var(--text-main)');
+    txtNome.setAttribute('font-size', '10px');
+    txtNome.setAttribute('font-weight', '700');
+    txtNome.textContent = pontoObj.nome || rotuloPadrao;
+
+    // Rótulo do Avaliador (ou alerta de ausência)
+    const txtAutor = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    txtAutor.setAttribute('x', cx);
+    txtAutor.setAttribute('y', cy + 22);
+    txtAutor.setAttribute('text-anchor', 'middle');
+    txtAutor.setAttribute('font-size', '9px');
+    txtAutor.setAttribute('font-weight', '600');
+
+    if (temAparelho) {
+      txtAutor.setAttribute('fill', 'var(--primary)');
+      txtAutor.textContent = `👤 ${aparelhosAtribuidos.join(', ')}`;
+    } else {
+      txtAutor.setAttribute('fill', '#f59e0b');
+      txtAutor.textContent = '⚠️ Sem avaliador';
+    }
+
+    g.appendChild(circle);
+    g.appendChild(txtNome);
+    g.appendChild(txtAutor);
+    this.camadaPontos.appendChild(g);
   }
 
-  obterPosicaoAtendimento(isRetrato) {
-    return isRetrato ? { x: 160, y: 47 } : { x: 75, y: 80 };
+  obterPosicaoSlotPessoa(zonaId, indice, totalVisiveis, zonas) {
+    const ehPadrao = this.ehLayoutRestaurantePadrao(zonas);
+
+    if (ehPadrao) {
+      if (zonaId === 'origem') {
+        return { x: 890, y: 85 };
+      }
+      if (zonaId === 'z1') {
+        // Fila horizontal que se estende da direita (760) até a catraca (500)
+        const xFim = 500;
+        const xIni = 770;
+        const espaco = Math.min(22, (xIni - xFim) / Math.max(1, totalVisiveis));
+        return { x: xFim + indice * espaco, y: 85 };
+      }
+      if (zonaId === 'z2') {
+        // Trilha de atendimento: da catraca (420) até as mesas (260)
+        const xFim = 260;
+        const xIni = 410;
+        const espaco = Math.min(24, (xIni - xFim) / Math.max(1, totalVisiveis));
+        return { x: xFim + indice * espaco, y: 85 };
+      }
+      if (zonaId === 'z3') {
+        // Mesas: grade 4x4
+        const colunas = 4;
+        const col = indice % colunas;
+        const lin = Math.floor(indice / colunas);
+        return { x: 55 + col * 26, y: 70 + lin * 25 };
+      }
+      if (zonaId === 'saida') {
+        return { x: 105, y: 275 };
+      }
+    }
+
+    // Layout genérico em cadeia
+    const totalEstacoes = zonas.length + 2;
+    const larguraView = Math.max(1000, totalEstacoes * 180);
+    const espacamento = (larguraView - 40) / totalEstacoes;
+
+    if (zonaId === 'origem') return { x: 80, y: 125 };
+    if (zonaId === 'saida') return { x: 20 + (zonas.length + 1) * espacamento + 60, y: 125 };
+
+    const idxZona = zonas.findIndex(z => z.id === zonaId);
+    if (idxZona !== -1) {
+      const xBase = 20 + (idxZona + 1) * espacamento;
+      const modo = zonas[idxZona].modo;
+      if (modo === 'contagem') {
+        const colunas = 3;
+        const col = indice % colunas;
+        const lin = Math.floor(indice / colunas);
+        return { x: xBase + 20 + col * 22, y: 110 + lin * 20 };
+      } else {
+        const esp = Math.min(20, 120 / Math.max(1, totalVisiveis));
+        return { x: xBase + 15 + indice * esp, y: 125 };
+      }
+    }
+
+    return { x: 500, y: 125 };
   }
 
-  /**
-   * Renderiza o estado completo da fila.
-   * @param {Object} estado - Estado derivado de derivarEstado.
-   * @param {boolean} [animar=true] - Se deve aplicar transição suave ou atualizar direto.
-   */
+  obterFormaEStiloPessoa(zonaId, zonasMap) {
+    if (zonaId === 'origem') {
+      return { forma: 'circulo', cor: '#8b5cf6', exibeNumero: false };
+    }
+    if (zonaId === 'saida') {
+      return { forma: 'circulo', cor: '#f97316', exibeNumero: false };
+    }
+
+    const z = zonasMap.get(zonaId);
+    if (!z) return { forma: 'circulo', cor: '#dc2626', exibeNumero: true };
+
+    if (z.id === 'z1') {
+      return { forma: 'circulo', cor: z.cor || '#dc2626', exibeNumero: true };
+    }
+    if (z.id === 'z2') {
+      return { forma: 'quadrado', cor: z.cor || '#16a34a', exibeNumero: true };
+    }
+    if (z.id === 'z3' || z.modo === 'contagem') {
+      // Regra do projeto: Zonas de contagem não exibem número
+      return { forma: 'mesa', cor: z.cor || '#ec4899', exibeNumero: false };
+    }
+
+    return { forma: 'circulo', cor: z.cor || '#6366f1', exibeNumero: z.modo === 'fifo' };
+  }
+
   renderizarEstado(estado, animar = true) {
     if (!this.habilitada || !this.svg || !estado) return;
     this.estadoAtual = estado;
+    this.configAtual = estado.config;
 
-    const fila = estado.fila || [];
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
-    const maxVisiveis = 25;
-    const visiveis = fila.slice(0, maxVisiveis);
-    const excedente = fila.length - visiveis.length;
+    const zonas = (estado.config?.zonas || []).filter(z => z.habilitada !== false);
+    const zonasMap = new Map(zonas.map(z => [z.id, z]));
 
-    // Se a aba estiver em segundo plano, não anima
+    this.desenharEstruturaPercurso();
+
     if (this.abaEmSegundoPlano) animar = false;
 
-    // Escalonamento progressivo para filas longas
-    let raio = 18;
-    if (visiveis.length > 15) raio = 15;
-    if (visiveis.length > 20) raio = 13;
-
-    // Mapeamento dos nós já existentes no SVG
     const nosExistentes = new Map();
     for (const no of Array.from(this.camadaPessoas.children)) {
       const pId = parseInt(no.getAttribute('data-pessoa'), 10);
       if (pId) nosExistentes.set(pId, no);
     }
 
-    const idsAtuais = new Set(visiveis);
+    this.camadaIndicadores.innerHTML = '';
+    const idsVisiveisAtuais = new Set();
 
-    // 1. Remove nós que não estão mais visíveis na fila
+    // Renderiza pessoas presentes em cada zona habilitada
+    for (const z of zonas) {
+      const zEstado = estado.zonas[z.id];
+      if (!zEstado) continue;
+
+      const fila = zEstado.fila || [];
+      const maxVisiveis = 25;
+      const visiveis = fila.slice(0, maxVisiveis);
+      const excedente = fila.length - visiveis.length;
+
+      for (let i = 0; i < visiveis.length; i++) {
+        const pId = visiveis[i];
+        idsVisiveisAtuais.add(pId);
+        const pos = this.obterPosicaoSlotPessoa(z.id, i, visiveis.length, zonas);
+        const estilo = this.obterFormaEStiloPessoa(z.id, zonasMap);
+
+        let g = nosExistentes.get(pId);
+        if (!g) {
+          g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          g.setAttribute('class', 'pessoa-item');
+          g.setAttribute('data-pessoa', pId);
+
+          const posOrigem = this.obterPosicaoSlotPessoa('origem', 0, 1, zonas);
+          g.setAttribute('transform', `translate(${posOrigem.x}, ${posOrigem.y})`);
+
+          this.camadaPessoas.appendChild(g);
+          void g.getBoundingClientRect();
+        }
+
+        g.innerHTML = '';
+
+        // Criação da forma visual para acessibilidade (círculo, quadrado, mesa)
+        if (estilo.forma === 'quadrado') {
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', -10);
+          rect.setAttribute('y', -10);
+          rect.setAttribute('width', 20);
+          rect.setAttribute('height', 20);
+          rect.setAttribute('rx', 4);
+          rect.setAttribute('fill', estilo.cor);
+          rect.setAttribute('stroke', '#ffffff');
+          rect.setAttribute('stroke-width', '1.5');
+          g.appendChild(rect);
+        } else if (estilo.forma === 'mesa') {
+          const mesa = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          mesa.setAttribute('x', -9);
+          mesa.setAttribute('y', -9);
+          mesa.setAttribute('width', 18);
+          mesa.setAttribute('height', 18);
+          mesa.setAttribute('rx', 9);
+          mesa.setAttribute('fill', estilo.cor);
+          mesa.setAttribute('stroke', '#ffffff');
+          mesa.setAttribute('stroke-width', '1.5');
+          g.appendChild(mesa);
+        } else {
+          const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+          circle.setAttribute('r', 11);
+          circle.setAttribute('fill', estilo.cor);
+          circle.setAttribute('stroke', '#ffffff');
+          circle.setAttribute('stroke-width', '1.5');
+          g.appendChild(circle);
+        }
+
+        // Exibição de número (somente se não for contagem)
+        if (estilo.exibeNumero) {
+          const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          txt.setAttribute('class', 'pessoa-numero');
+          txt.setAttribute('text-anchor', 'middle');
+          txt.setAttribute('dy', '3.5px');
+          txt.setAttribute('fill', '#ffffff');
+          txt.setAttribute('font-size', '9px');
+          txt.setAttribute('font-weight', '700');
+          txt.textContent = pId;
+          g.appendChild(txt);
+        }
+
+        if (animar) {
+          g.style.transition = `transform ${this.duracaoTransicao}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.3s ease`;
+        } else {
+          g.style.transition = 'none';
+        }
+
+        g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
+        g.style.opacity = '1';
+      }
+
+      // Exibição de excedente (+N) para filas com mais de 25 itens
+      if (excedente > 0) {
+        const ultPos = this.obterPosicaoSlotPessoa(z.id, visiveis.length - 1, visiveis.length, zonas);
+        const gInd = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        gInd.setAttribute('transform', `translate(${ultPos.x + 28}, ${ultPos.y})`);
+
+        const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', -18);
+        rect.setAttribute('y', -10);
+        rect.setAttribute('width', 36);
+        rect.setAttribute('height', 20);
+        rect.setAttribute('rx', 10);
+        rect.setAttribute('fill', z.cor || 'var(--primary)');
+
+        const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        txt.setAttribute('class', 'pessoa-numero');
+        txt.setAttribute('text-anchor', 'middle');
+        txt.setAttribute('dy', '3.5px');
+        txt.setAttribute('fill', '#ffffff');
+        txt.setAttribute('font-size', '10px');
+        txt.setAttribute('font-weight', '800');
+        txt.textContent = `+${excedente}`;
+
+        gInd.appendChild(rect);
+        gInd.appendChild(txt);
+        this.camadaIndicadores.appendChild(gInd);
+      }
+    }
+
+    // Remove nós de pessoas que não estão mais em nenhuma zona visível
     for (const [pId, no] of nosExistentes.entries()) {
-      if (!idsAtuais.has(pId)) {
+      if (!idsVisiveisAtuais.has(pId)) {
         if (animar) {
           no.style.opacity = '0';
           setTimeout(() => no.remove(), 400);
@@ -178,95 +507,8 @@ export class AnimadorFila {
         }
       }
     }
-
-    // 2. Atualiza ou cria elementos para as pessoas visíveis
-    for (let i = 0; i < visiveis.length; i++) {
-      const pId = visiveis[i];
-      const pos = this.obterPosicaoSlot(i, visiveis.length, isRetrato);
-      let g = nosExistentes.get(pId);
-
-      const ehCatraca = (i === 0);
-
-      if (!g) {
-        // Nova pessoa entrando na visualização
-        g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('class', 'pessoa-item');
-        g.setAttribute('data-pessoa', pId);
-
-        const posOrigem = this.obterPosicaoOrigem(isRetrato);
-        g.setAttribute('transform', `translate(${posOrigem.x}, ${posOrigem.y})`);
-
-        const circulo = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circulo.setAttribute('r', raio);
-        circulo.setAttribute('class', 'pessoa-circulo origem');
-
-        const texto = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        texto.setAttribute('class', 'pessoa-numero');
-        texto.textContent = pId;
-
-        g.appendChild(circulo);
-        g.appendChild(texto);
-        this.camadaPessoas.appendChild(g);
-
-        // Força reflow antes da animação de deslizamento
-        void g.getBoundingClientRect();
-      }
-
-      // Atualiza raio e classes do círculo
-      const circulo = g.querySelector('circle');
-      if (circulo) {
-        circulo.setAttribute('r', raio);
-        if (ehCatraca) {
-          circulo.setAttribute('class', 'pessoa-circulo catraca');
-        } else {
-          circulo.setAttribute('class', 'pessoa-circulo fila');
-        }
-      }
-
-      // Aplica posição final
-      if (animar) {
-        g.style.transition = `transform ${this.duracaoChegada}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease`;
-      } else {
-        g.style.transition = 'none';
-      }
-
-      g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
-      g.style.opacity = '1';
-    }
-
-    // 3. Indicador de Excedente (+N)
-    this.camadaIndicador.innerHTML = '';
-    if (excedente > 0) {
-      const ultPos = this.obterPosicaoSlot(visiveis.length - 1, visiveis.length, isRetrato);
-      const posIndicador = isRetrato
-        ? { x: ultPos.x, y: ultPos.y + 35 }
-        : { x: ultPos.x + 45, y: ultPos.y };
-
-      const gInd = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      gInd.setAttribute('transform', `translate(${posIndicador.x}, ${posIndicador.y})`);
-
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('x', -24);
-      rect.setAttribute('y', -14);
-      rect.setAttribute('width', 48);
-      rect.setAttribute('height', 28);
-      rect.setAttribute('rx', 14);
-      rect.setAttribute('fill', 'var(--primary)');
-
-      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      txt.setAttribute('class', 'pessoa-numero');
-      txt.textContent = `+${excedente}`;
-
-      gInd.appendChild(rect);
-      gInd.appendChild(txt);
-      this.camadaIndicador.appendChild(gInd);
-    }
   }
 
-  /**
-   * Aplica operações atômicas recebidas pelo diff de estados.
-   * Se houver rajada (> 5 operações), atualiza diretamente para não engasgar a animação.
-   */
   aplicarOperacoes(diff = [], estadoNovo) {
     if (!this.habilitada) return;
 
@@ -275,17 +517,24 @@ export class AnimadorFila {
       return;
     }
 
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
+    const zonas = (estadoNovo.config?.zonas || []).filter(z => z.habilitada !== false);
 
     for (const op of diff) {
-      if (op.op === 'confirmar') {
+      if (op.op === 'mover') {
         const no = this.camadaPessoas.querySelector(`[data-pessoa="${op.pessoa}"]`);
         if (no) {
-          const posAtend = this.obterPosicaoAtendimento(isRetrato);
-          no.style.transition = `transform ${this.duracaoAtendimento}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity ${this.duracaoAtendimento}s ease`;
-          no.setAttribute('transform', `translate(${posAtend.x}, ${posAtend.y})`);
+          const posDest = this.obterPosicaoSlotPessoa(op.para, 0, 1, zonas);
+          no.style.transition = `transform ${this.duracaoTransicao}s cubic-bezier(0.2, 0.8, 0.2, 1)`;
+          no.setAttribute('transform', `translate(${posDest.x}, ${posDest.y})`);
+        }
+      } else if (op.op === 'sair') {
+        const no = this.camadaPessoas.querySelector(`[data-pessoa="${op.pessoa}"]`);
+        if (no) {
+          const posSaida = this.obterPosicaoSlotPessoa('saida', 0, 1, zonas);
+          no.style.transition = `transform ${this.duracaoTransicao}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.5s ease`;
+          no.setAttribute('transform', `translate(${posSaida.x}, ${posSaida.y})`);
           no.style.opacity = '0';
-          setTimeout(() => no.remove(), this.duracaoAtendimento * 1000);
+          setTimeout(() => no.remove(), this.duracaoTransicao * 1000);
         }
       } else if (op.op === 'anular') {
         const no = this.camadaPessoas.querySelector(`[data-pessoa="${op.pessoa}"]`);
@@ -295,38 +544,43 @@ export class AnimadorFila {
           no.style.opacity = '0';
           setTimeout(() => no.remove(), 400);
         }
+      } else if (op.op === 'reverter') {
+        // Reversão suave no caminho inverso
+        this.renderizarEstado(estadoNovo, true);
       }
     }
 
-    // Sincroniza a posição da fila restante
+    // Sincroniza posições finais dos slots
     setTimeout(() => {
       this.renderizarEstado(estadoNovo, true);
-    }, 150);
+    }, this.duracaoTransicao * 1000);
   }
 
-  verificarPulsoCatraca() {
-    if (!this.estadoAtual || !this.estadoAtual.primeiraDaFila) return;
-    const primeiraPessoa = this.estadoAtual.primeiraDaFila;
-    const no = this.camadaPessoas.querySelector(`[data-pessoa="${primeiraPessoa}"] circle`);
+  verificarAlertasOciosidade() {
+    if (!this.estadoAtual) return;
+    const agora = Date.now();
+    const config = this.estadoAtual.config;
+    const limiarMs = (config?.limiarAlertaOciosoSeg || 120) * 1000;
 
-    if (no) {
-      const espera = this.estadoAtual.esperaNaCatracaMs || 0;
-      if (espera >= 10000) {
-        no.classList.add('pulse');
-      } else {
-        no.classList.remove('pulse');
+    // Regra: se passar de 10s sem registro no ponto da cabeça de uma zona FIFO com zona seguinte vazia, NÃO alertar.
+    // Alertar APENAS se houver fila acumulada sem avanço acima do limiar configurado.
+    for (const [pId, pt] of Object.entries(this.estadoAtual.pontos || {})) {
+      const zOrigem = this.estadoAtual.zonas?.[pt.de];
+      if (zOrigem && zOrigem.fila.length > 0) {
+        const ultEvento = pt.ultimoEventoMs || this.estadoAtual.config?.inicioMs || agora;
+        const ociosoMs = agora - ultEvento;
+
+        const elementoPonto = this.camadaPontos.querySelector(`[data-ponto="${pId}"] circle`);
+        if (elementoPonto) {
+          if (ociosoMs >= limiarMs) {
+            elementoPonto.setAttribute('stroke', '#ef4444');
+            elementoPonto.setAttribute('stroke-width', '3');
+          } else {
+            elementoPonto.setAttribute('stroke', '#ffffff');
+            elementoPonto.setAttribute('stroke-width', '2');
+          }
+        }
       }
-    }
-  }
-
-  destruir() {
-    if (this.timerPulsoCatraca) {
-      clearInterval(this.timerPulsoCatraca);
-      this.timerPulsoCatraca = null;
-    }
-    if (this.container) {
-      this.container.innerHTML = '';
     }
   }
 }
-

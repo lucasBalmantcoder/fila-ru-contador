@@ -7,9 +7,11 @@
   <title>Coletor Fila RU - Celular</title>
   <link rel="stylesheet" href="estilo.css">
   <style>
-    /* Ajustes específicos para a tela do celular */
+    /* Estilos adaptativos da tela do celular para múltiplos pontos */
     body {
-      padding-bottom: 20px;
+      padding-bottom: 24px;
+      user-select: none;
+      -webkit-user-select: none;
     }
     .hud-compacto {
       display: grid;
@@ -21,39 +23,167 @@
       padding: 6px 8px;
     }
     .hud-compacto .hud-stat .value {
-      font-size: 1.25rem;
+      font-size: 1.15rem;
     }
-    .lista-fila-compacta {
+
+    /* Layout dinâmico dos cartões de pontos atribuídos */
+    .pontos-container {
       display: flex;
-      gap: 8px;
-      overflow-x: auto;
-      padding: 6px 2px;
-      white-space: nowrap;
-      scrollbar-width: thin;
+      flex-direction: column;
+      gap: 10px;
+      width: 100%;
+      margin-bottom: 12px;
     }
-    .tag-pessoa {
-      display: inline-flex;
+    .pontos-container.layout-1 {
+      /* 1 ponto: tela cheia */
+      min-height: 52vh;
+    }
+    .pontos-container.layout-2 {
+      /* 2 pontos: tela dividida */
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 10px;
+    }
+    .pontos-container.layout-grade {
+      /* 3 ou 4 pontos: grade 2x2 */
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+    .pontos-container.layout-rolagem {
+      /* Mais de 4 pontos: rolagem */
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      overflow-y: auto;
+      max-height: 65vh;
+    }
+
+    .card-ponto-coleta {
+      background: var(--bg-card);
+      border: 2px solid var(--border-color);
+      border-radius: 12px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1);
+    }
+    .card-ponto-header {
+      display: flex;
+      justify-content: space-between;
       align-items: center;
+      border-bottom: 1px solid var(--border-color);
+      padding-bottom: 6px;
+    }
+    .card-ponto-nome {
+      font-size: 1rem;
+      font-weight: 800;
+    }
+    .card-ponto-trajeto {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+    .ocupacao-vizinhas {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.78rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: var(--bg-subtle);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+
+    /* Botão gigante do cartão */
+    .btn-acao-ponto {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      border: none;
+      border-radius: 10px;
+      color: #ffffff;
+      padding: 14px 10px;
+      cursor: pointer;
+      font-weight: 800;
+      transition: transform 0.08s ease, filter 0.08s ease;
+      touch-action: manipulation;
+    }
+    .btn-acao-ponto:active {
+      transform: scale(0.96);
+    }
+    .btn-acao-ponto:disabled {
+      opacity: 0.45;
+      cursor: not-allowed;
+      transform: none !important;
+    }
+    .btn-acao-ponto.chegada {
+      background: linear-gradient(135deg, #15803d, #16a34a);
+    }
+    .btn-acao-ponto.passagem-fifo {
+      background: linear-gradient(135deg, #1d4ed8, #2563eb);
+    }
+    .btn-acao-ponto.passagem-contagem {
+      background: linear-gradient(135deg, #db2777, #ec4899);
+    }
+
+    .btn-acao-titulo {
+      font-size: 1.35rem;
+      letter-spacing: 0.5px;
+    }
+    .btn-acao-sub {
+      font-size: 0.85rem;
+      opacity: 0.9;
+      margin-top: 2px;
+      font-weight: 600;
+    }
+
+    /* Seletor de multiplicador rápido */
+    .multiplicador-bar {
+      display: flex;
       gap: 6px;
+      justify-content: center;
+      margin-top: 2px;
+    }
+    .btn-mult {
       background: var(--bg-subtle);
       border: 1px solid var(--border-color);
-      padding: 4px 10px;
-      border-radius: 9999px;
-      font-size: 0.82rem;
+      color: var(--text-main);
+      padding: 2px 8px;
+      border-radius: 6px;
+      font-size: 0.75rem;
       font-weight: 700;
-    }
-    .tag-pessoa.primeira {
-      background: rgba(22, 163, 74, 0.15);
-      border-color: var(--success);
-      color: var(--success);
-    }
-    .btn-anular-tag {
-      background: transparent;
-      border: none;
-      color: var(--danger);
-      font-size: 1rem;
       cursor: pointer;
-      line-height: 1;
+    }
+    .btn-mult.active {
+      background: var(--primary);
+      color: #ffffff;
+      border-color: var(--primary);
+    }
+
+    /* Ações auxiliares do cartão */
+    .ponto-acoes-secundarias {
+      display: flex;
+      justify-content: space-between;
+      gap: 6px;
+      margin-top: 4px;
+    }
+    .btn-ponto-aux {
+      flex: 1;
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      padding: 5px 6px;
+      border-radius: 6px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      color: var(--text-main);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
     }
   </style>
 </head>
@@ -74,23 +204,22 @@
     </div>
   </header>
 
-  <!-- CONTEÚDO PRINCIPAL (MOBILE FIRST) -->
   <main>
 
-    <!-- Banner de Orientação de Tela / HTTP -->
-    <div id="banner-tela-bloqueio" style="display:none; background:rgba(217,119,6,0.12); border:1px solid var(--warning); color:var(--warning); padding:6px 10px; border-radius:8px; font-size:0.78rem;">
-      💡 Dica: Em conexões HTTP locais, mantenha o bloqueio de tela do celular desligado durante a coleta.
+    <!-- Banner de tela de bloqueio HTTP -->
+    <div id="banner-tela-bloqueio" style="display:none; background:rgba(217,119,6,0.12); border:1px solid var(--warning); color:var(--warning); padding:6px 10px; border-radius:8px; font-size:0.75rem;">
+      💡 Dica: Mantenha a tela ligada durante a coleta para não interromper a sincronização.
     </div>
 
     <!-- HUD Compacto de Métricas ao Vivo -->
     <div class="hud-compacto">
       <div class="hud-stat highlight-queue">
-        <span class="label">Fila</span>
-        <span class="value" id="hud-fila">0</span>
+        <span class="label">No RU</span>
+        <span class="value" id="hud-presentes">0</span>
       </div>
       <div class="hud-stat">
-        <span class="label">Atendidos</span>
-        <span class="value" id="hud-atendidos" style="color:var(--btn-atendimento-bg);">0</span>
+        <span class="label">Saídas</span>
+        <span class="value" id="hud-saidas" style="color:var(--btn-atendimento-bg);">0</span>
       </div>
       <div class="hud-stat">
         <span class="label">Chegadas</span>
@@ -102,57 +231,28 @@
       </div>
     </div>
 
-    <!-- Feedback Rápido de Ação (Toast) -->
+    <!-- Toast de Feedback e Notificações -->
     <div class="toast-bar" id="toast-feedback">
       <span id="toast-icone">🟢</span>
-      <span id="toast-msg">Pronto para coletar. Conecte-se ao servidor.</span>
+      <span id="toast-msg">Pronto para coletar. Conectando ao servidor...</span>
     </div>
 
-    <!-- BOTÕES GIGANTES DE COLETA -->
-    <div class="collection-buttons" id="box-botoes">
-      <button class="big-btn chegada" id="btn-chegada" onclick="CelularApp.registrarChegada()">
-        <span class="big-btn-title">CHEGADA</span>
-        <span class="big-btn-subtitle">+1 Pessoa na Fila</span>
-        <span class="big-btn-counter" id="lbl-total-chegadas">Total: 0</span>
-      </button>
-
-      <button class="big-btn atendimento" id="btn-atendimento" onclick="CelularApp.registrarAtendimento()" disabled>
-        <span class="big-btn-title">ATENDIDO</span>
-        <span class="big-btn-subtitle" id="lbl-pessoa-atendimento">Fila Vazia</span>
-        <span class="big-btn-counter" id="lbl-total-atendidos">Total: 0</span>
-      </button>
-    </div>
-
-    <!-- Mini Animação da Fila (Toggleable) -->
-    <div class="animacao-wrapper" id="box-mini-animacao" style="display:block;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.75rem; color:var(--text-muted);">
-        <span>Visualização da Fila</span>
-        <button class="btn btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="CelularApp.toggleAnimacao()">Ocultar</button>
+    <!-- ÁREA DE CARTÕES DE PONTOS ATRIBUÍDOS AO APARELHO -->
+    <div id="container-pontos-celular" class="pontos-container layout-1">
+      <div style="text-align:center; padding:30px 15px; color:var(--text-muted); background:var(--bg-card); border-radius:12px; border:1px solid var(--border-color);">
+        Aguardando autenticação e atribuição de pontos...
       </div>
-      <div class="animacao-container" id="container-animacao" style="height:120px;"></div>
     </div>
 
-    <!-- Lista Compacta de Pessoas na Fila com Ação de Anulação -->
-    <div class="card" style="padding:10px;">
-      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
-        <span style="font-size:0.85rem; font-weight:700;">Fila Atual (<span id="lbl-qtd-fila">0</span>)</span>
-        <button class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem; color:var(--danger);" onclick="CelularApp.removerUltimaChegada()">
-          ✕ Remover Última Chegada
+    <!-- Mini Animação do Percurso Completo (Desligável) -->
+    <div class="animacao-wrapper" id="box-mini-animacao">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; font-size:0.75rem; color:var(--text-muted);">
+        <span>Percurso Completo em Tempo Real</span>
+        <button class="btn btn-secondary" style="padding:2px 6px; font-size:0.7rem;" onclick="CelularApp.toggleAnimacao()">
+          <span id="lbl-toggle-anim">Ocultar</span>
         </button>
       </div>
-      <div class="lista-fila-compacta" id="lista-tags-fila">
-        <span style="font-size:0.8rem; color:var(--text-muted)">Nenhuma pessoa na fila.</span>
-      </div>
-    </div>
-
-    <!-- Ações Auxiliares: Anotação e Reversão -->
-    <div class="btn-group" style="justify-content:space-between;">
-      <button class="btn btn-secondary" style="flex:1;" onclick="CelularApp.abrirModalAnotacao()">
-        📝 Anotação
-      </button>
-      <button class="btn btn-secondary" style="flex:1;" onclick="CelularApp.reverterUltimoAtendimento()">
-        ↩ Reverter Último
-      </button>
+      <div class="animacao-container" id="container-animacao" style="height:120px;"></div>
     </div>
 
   </main>
@@ -168,7 +268,7 @@
         <span>Conectar ao Servidor RU</span>
       </div>
       <p style="font-size:0.85rem; color:var(--text-muted)">
-        Informe o PIN de 4 dígitos exibido no painel do notebook e identifique seu aparelho.
+        Informe o PIN de 4 dígitos exibido no painel do notebook e selecione seu aparelho.
       </p>
 
       <form onsubmit="event.preventDefault(); CelularApp.salvarEConectar();">
@@ -179,16 +279,23 @@
 
         <div class="form-group" style="margin-bottom:10px;">
           <label for="cfg-nome">Nome do Aparelho *</label>
-          <input type="text" id="cfg-nome" required value="Celular 1" placeholder="Ex: Celular Entrada 1">
+          <input type="text" id="cfg-nome" required value="Celular 1" placeholder="Ex: Celular Entrada">
+        </div>
+
+        <div class="form-group" style="margin-bottom:10px;">
+          <label for="cfg-papel">Papel na Coleta</label>
+          <select id="cfg-papel">
+            <option value="avaliador">Avaliador (Registra apenas nos pontos atribuídos)</option>
+            <option value="supervisor">Supervisor (Todos os pontos liberados)</option>
+            <option value="observador">Observador (Apenas visualização)</option>
+          </select>
         </div>
 
         <div class="form-group" style="margin-bottom:16px;">
-          <label for="cfg-papel">Papel na Coleta</label>
-          <select id="cfg-papel">
-            <option value="ambos">Completo (Chegadas e Atendimentos)</option>
-            <option value="chegada">Somente Chegadas (Entrada)</option>
-            <option value="catraca">Somente Atendimentos (Catraca)</option>
-          </select>
+          <label style="display:flex; align-items:center; gap:8px; font-size:0.85rem; cursor:pointer;">
+            <input type="checkbox" id="cfg-som" checked>
+            <span>Feedback sonoro nos toques</span>
+          </label>
         </div>
 
         <button type="submit" class="btn btn-primary" style="width:100%; padding:12px; font-size:1.05rem;">
@@ -205,15 +312,34 @@
         <span>Inserir Anotação</span>
         <button class="btn btn-secondary" style="padding:2px 8px;" onclick="CelularApp.fecharModais()">✕</button>
       </div>
-      <div class="btn-group" style="margin-bottom:8px;">
-        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Catraca travou')">⚠️ Catraca travou</button>
-        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Pico de chegada')">👥 Pico de chegada</button>
-        <button class="btn btn-secondary" style="font-size:0.78rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Falta de bandeja / comida')">🍲 Reposição</button>
+      <div class="btn-group" style="margin-bottom:8px; flex-wrap:wrap;">
+        <button class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Catraca travou')">⚠️ Catraca travou</button>
+        <button class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Pico de chegada')">👥 Pico de chegada</button>
+        <button class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Reposição de bandejas/comida')">🍲 Reposição</button>
+        <button class="btn btn-secondary" style="font-size:0.75rem; padding:4px 8px;" onclick="CelularApp.preencherAnotacao('Falta de mesas')">🪑 Mesas cheias</button>
       </div>
       <input type="text" id="txt-anotacao" placeholder="Descreva a ocorrência..." maxlength="150">
-      <div class="btn-group" style="justify-content:flex-end;">
+      <input type="hidden" id="txt-anotacao-ponto" value="">
+      <div class="btn-group" style="justify-content:flex-end; margin-top:10px;">
         <button class="btn btn-secondary" onclick="CelularApp.fecharModais()">Cancelar</button>
         <button class="btn btn-primary" onclick="CelularApp.enviarAnotacao()">Salvar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal 3: Anulação com Escolha de Pessoa em Zona FIFO -->
+  <div class="modal-backdrop" id="modal-anulacao">
+    <div class="modal-dialog">
+      <div class="modal-title">
+        <span>Remover / Anular da Zona</span>
+        <button class="btn btn-secondary" style="padding:2px 8px;" onclick="CelularApp.fecharModais()">✕</button>
+      </div>
+      <p style="font-size:0.85rem; color:var(--text-muted)" id="lbl-anulacao-desc">
+        Selecione a pessoa que desistiu ou foi registrada por engano:
+      </p>
+      <div id="lista-pessoas-anulacao" style="display:flex; flex-wrap:wrap; gap:6px; max-height:160px; overflow-y:auto; margin-bottom:12px;"></div>
+      <div class="btn-group" style="justify-content:flex-end;">
+        <button class="btn btn-secondary" onclick="CelularApp.fecharModais()">Cancelar</button>
       </div>
     </div>
   </div>
@@ -221,4 +347,3 @@
   <script type="module" src="celular.js"></script>
 </body>
 </html>
-

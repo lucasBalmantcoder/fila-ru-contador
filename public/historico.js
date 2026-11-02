@@ -1,13 +1,15 @@
 /**
  * public/historico.js
- * Lógica da tela de histórico, reprodução fiel da animação e relatórios estatísticos.
+ * Lógica da tela de histórico, reprodução fiel do percurso em todas as zonas gravadas,
+ * gráficos estatísticos analíticos (área empilhada, acumulado por ponto, histogramas),
+ * exportação em múltiplos formatos e comparação entre sessões.
  */
 
 import { derivarEstado } from '../shared/estado.js';
 import { calcularMetricas, formatarDuracao, formatarHoraLocal, formatarNumero } from '../shared/metricas.js';
 import { AnimadorFila } from './animacao.js';
 
-const HistoricoApp = {
+export const HistoricoApp = {
   sessaoAtual: null,
   dadosCompletos: null,
   animador: null,
@@ -63,13 +65,22 @@ const HistoricoApp = {
         const horaStr = formatarHoraLocal(s.inicioMs);
         const tagTeste = s.teste ? '<span style="background:var(--warning); color:#fff; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:700;">TESTE</span>' : '';
 
+        // Resumo das zonas configuradas na sessão
+        const zonasNomes = (s.zonas || s.config?.zonas || [{ nome: 'Fila inicial' }])
+          .filter(z => z.habilitada !== false)
+          .map(z => z.nome)
+          .join(', ');
+
         item.innerHTML = `
           <div>
             <div style="font-weight:700; font-size:1rem; display:flex; align-items:center; gap:8px;">
               <span>${s.nome}</span> ${tagTeste}
             </div>
-            <div style="font-size:0.8rem; color:var(--text-muted);">
+            <div style="font-size:0.8rem; color:var(--text-muted); margin-top:2px;">
               ${s.local} • Início: ${dataStr} ${horaStr} • Status: <strong>${s.status}</strong>
+            </div>
+            <div style="font-size:0.75rem; color:var(--text-muted); margin-top:2px;">
+              Zonas: ${zonasNomes}
             </div>
           </div>
           <div class="btn-group" onclick="event.stopPropagation()">
@@ -108,383 +119,509 @@ const HistoricoApp = {
 
   preencherRelatorio(dados) {
     const meta = dados.meta;
-    const metricas = dados.metricas;
+    const m = dados.metricas;
 
     document.getElementById('rel-nome').textContent = meta.nome;
     document.getElementById('rel-sub').textContent =
-      `${meta.local} • Início: ${formatarHoraLocal(metricas.inicioMs)} • Duração: ${formatarDuracao(metricas.duracaoTotalMs)} (${formatarNumero(metricas.duracaoMin, 1)} min)`;
+      `${meta.local} • Início: ${formatarHoraLocal(m.inicioMs)} • Duração: ${formatarDuracao(m.duracaoTotalMs)} (${formatarNumero(m.duracaoMin, 1)} min)`;
     document.getElementById('rel-obs').textContent = meta.observacoes ? `Observações: "${meta.observacoes}"` : '';
 
-    // KPIs
-    document.getElementById('kpi-cheg').textContent = metricas.n_chegadas;
-    document.getElementById('kpi-lambda').textContent = `λ = ${formatarNumero(metricas.lambda, 2)} p/min`;
-    document.getElementById('kpi-atend').textContent = metricas.n_atendimentos;
-    document.getElementById('kpi-vazao-global').textContent = `Vazão = ${formatarNumero(metricas.vazaoGlobalPorMin, 2)} p/min`;
-    document.getElementById('kpi-util').textContent = `${formatarNumero(metricas.utilizacao * 100, 1)}%`;
-    document.getElementById('kpi-l').textContent = formatarNumero(metricas.filaTempo.mediaPonderada, 1);
-    document.getElementById('kpi-pico').textContent = `Pico: ${metricas.filaTempo.max} pessoas (${formatarHoraLocal(metricas.filaTempo.instanteMaxMs)})`;
+    // KPIs Globais
+    document.getElementById('kpi-cheg').textContent = m.balanco?.chegadas ?? m.n_chegadas;
+    document.getElementById('kpi-lambda').textContent = `λ = ${formatarNumero(m.global?.lambdaGlobal ?? m.lambda, 2)} p/min`;
+    document.getElementById('kpi-atend').textContent = m.balanco?.saidas ?? m.n_atendimentos;
+    document.getElementById('kpi-vazao-global').textContent = `Vazão = ${formatarNumero(m.vazaoGlobalPorMin, 2)} p/min`;
 
-    document.getElementById('kpi-espera-media').textContent = formatarDuracao(metricas.statsEspera.media * 1000).substring(3);
-    document.getElementById('kpi-espera-mediana').textContent = `Mediana: ${formatarDuracao(metricas.statsEspera.mediana * 1000).substring(3)}`;
-    document.getElementById('kpi-p95').textContent = formatarDuracao(metricas.statsEspera.p95 * 1000).substring(3);
-    document.getElementById('kpi-p90').textContent = `P90: ${formatarDuracao(metricas.statsEspera.p90 * 1000).substring(3)}`;
-    document.getElementById('kpi-int-media').textContent = `${formatarNumero(metricas.statsIntervalosAtend.media, 1)} s`;
-    document.getElementById('kpi-int-cv').textContent = `CV: ${formatarNumero(metricas.statsIntervalosAtend.cv, 2)}`;
-    document.getElementById('kpi-ocioso').textContent = `${formatarNumero(metricas.ociosidade.percentualOcioso, 1)}%`;
-    document.getElementById('kpi-pausas').textContent = `${metricas.ociosidade.qtdPausas} pausas longas`;
+    const tempoMedioSistema = m.global?.tempoMedioSistemaSeg || m.statsEspera.media;
+    document.getElementById('kpi-tempo-sistema').textContent = formatarDuracao(tempoMedioSistema * 1000).substring(3);
+    document.getElementById('kpi-tempo-sistema-seg').textContent = `${formatarNumero(tempoMedioSistema, 1)} seg`;
 
-    // Lei de Little
-    const l = metricas.little;
-    document.getElementById('box-little-info').innerHTML = `
-      <p>• Comprimento Médio Observado (L): <strong>${formatarNumero(l.L_observado, 2)} pessoas</strong></p>
-      <p>• Produto λ · W: <strong>${formatarNumero(l.L_calculado_lambda_W, 2)} pessoas</strong></p>
-      <p>• Discrepância Percentual: <strong>${formatarNumero(l.diffPerc, 1)}%</strong> ${l.consistente ? '✅ (Consistente com a teoria)' : '⚠️ (Diferença esperada em períodos finitos com fila residual)'}</p>
+    document.getElementById('kpi-l').textContent = formatarNumero(m.global?.L_medioGlobal ?? m.filaTempo.mediaPonderada, 1);
+    document.getElementById('kpi-pico').textContent = `Presentes: ${m.balanco?.presentes ?? m.n_na_fila}`;
+
+    // Tabela por Zona
+    const corpoZonas = document.getElementById('corpo-metricas-zonas');
+    corpoZonas.innerHTML = '';
+
+    for (const z of Object.values(m.zonas)) {
+      const tr = document.createElement('tr');
+      const divLittle = z.divergenciaLittle;
+      const rotuloEst = z.modo === 'contagem' ? ' <span class="badge-estimado">estimado</span>' : '';
+
+      tr.innerHTML = `
+        <td><strong style="color:${z.cor};">■</strong> <strong>${z.nome}</strong></td>
+        <td><span style="font-size:0.75rem; text-transform:uppercase;">${z.modo}</span></td>
+        <td>${z.entradas}</td>
+        <td>${z.saidas}</td>
+        <td>${formatarNumero(z.ocupacao.mediaPonderada, 2)} (pico: ${z.ocupacao.max})</td>
+        <td>${formatarNumero(z.tempoMedioConcluidosSeg, 1)} s${rotuloEst}</td>
+        <td>${formatarNumero(z.tempoMedioLittleSeg, 1)} s</td>
+        <td>${formatarNumero(divLittle.diffPerc, 1)}%</td>
+        <td>${formatarNumero(z.statsTempo.p90, 1)}s / ${formatarNumero(z.statsTempo.p95, 1)}s${rotuloEst}</td>
+        <td>${formatarNumero(z.vazaoSaida, 2)} p/min</td>
+        <td><strong>${formatarNumero(z.participacaoTempoTotal, 1)}%</strong></td>
+      `;
+      corpoZonas.appendChild(tr);
+    }
+
+    // Balanço Estrito de Consistência
+    const b = m.balanco;
+    document.getElementById('box-balanco-info').innerHTML = `
+      <p>• Chegadas Registradas: <strong>${b.chegadas}</strong></p>
+      <p>• Alunos Concluídos (Saídas): <strong>${b.saidas}</strong></p>
+      <p>• Alunos Anulados: <strong>${b.anuladas}</strong></p>
+      <p>• Alunos Ainda no Sistema: <strong>${b.presentes}</strong></p>
+      <p>• Equação de Balanço: <em>${b.chegadas} − ${b.saidas} − ${b.anuladas} = ${b.chegadas - b.saidas - b.anuladas}</em></p>
+      <p>• Status: ${b.consistente ? '✅ <strong style="color:var(--success)">Consistência Perfeita (0 discrepância)</strong>' : '⚠️ <strong style="color:var(--danger)">Discrepância detectada</strong>'}</p>
     `;
 
-    // Modelo Teórico
-    const teo = metricas.teorico;
-    const boxTeo = document.getElementById('box-teorico-info');
-    if (teo.aplicavel) {
-      boxTeo.innerHTML = `
-        <p>• Servidores: <strong>c = ${teo.c}</strong> • Intensidade: <strong>a = ${formatarNumero(teo.a, 2)} Erlangs</strong></p>
-        <p>• Fila Teórica (Lq): <strong>${formatarNumero(teo.Lq, 2)} pessoas</strong> (Obs: ${formatarNumero(metricas.filaTempo.mediaPonderada, 2)})</p>
-        <p>• Espera Teórica (Wq): <strong>${formatarDuracao(teo.Wq_seg * 1000).substring(3)}</strong> (Obs: ${formatarDuracao(metricas.statsEspera.media * 1000).substring(3)})</p>
-        <p>• Probabilidade de Espera P(W>0): <strong>${formatarNumero(teo.P_espera * 100, 1)}%</strong></p>
-      `;
-    } else {
-      boxTeo.innerHTML = `<span style="color:var(--warning)">⚠️ ${teo.motivo}</span>`;
-    }
+    // Qualidade dos Dados e Auditoria
+    const q = m.qualidade;
+    const cobStr = Object.entries(q.coberturaPorPonto || {}).map(([pt, perc]) => `${pt}: ${formatarNumero(perc, 0)}%`).join(' • ');
+    document.getElementById('box-qualidade-info').innerHTML = `
+      <p>• Eventos Tardios (Offline): <strong>${q.eventosTardios}</strong></p>
+      <p>• Inversões de Ordem Corrigidas: <strong>${q.inversoesCorrigidas}</strong></p>
+      <p>• Anulações Efetuadas: <strong>${q.anulacoes}</strong> • Reversões: <strong>${q.reversoes}</strong></p>
+      <p>• Cobertura por Ponto: <strong>${cobStr || '100%'}</strong></p>
+      <p>• Total de Eventos Processados: <strong>${q.totalEventos}</strong></p>
+    `;
   },
 
-  /* ==========================================================================
-     PLAYER DE REPRODUÇÃO DA FILA
-     ========================================================================== */
+  // --------------------------------------------------------------------------
+  // PLAYER DE REPRODUÇÃO (REPLAY FIEL)
+  // --------------------------------------------------------------------------
   iniciarPlayerReplay(eventos) {
     if (!eventos || eventos.length === 0) return;
 
-    this.pararReplay();
+    const tInicio = eventos[0].tEfetivo ?? eventos[0].t;
+    const tFim = eventos[eventos.length - 1].tEfetivo ?? eventos[eventos.length - 1].t;
+    const duracaoTotal = Math.max(1000, tFim - tInicio);
 
-    this.replay.tInicio = eventos[0].t;
-    this.replay.tFim = eventos[eventos.length - 1].t;
-    this.replay.duracaoTotal = Math.max(1000, this.replay.tFim - this.replay.tInicio);
-    this.replay.tAtual = this.replay.tInicio;
+    this.replay = {
+      ativo: false,
+      timer: null,
+      velocidade: 5,
+      tAtual: tInicio,
+      tInicio,
+      tFim,
+      duracaoTotal
+    };
 
-    document.getElementById('lbl-tempo-total-replay').textContent = formatarDuracao(this.replay.duracaoTotal).substring(3);
+    document.getElementById('lbl-tempo-total-replay').textContent = formatarDuracao(duracaoTotal).substring(3);
+    document.getElementById('slider-timeline').value = 0;
 
-    // Cria Marcadores na Barra de Tempo
-    this.criarMarcadoresTimeline(eventos);
-
-    // Inicializa no instante inicial
-    this.atualizarInstanteReplay(this.replay.tInicio);
+    this.desenharMarcadoresTimeline(eventos, tInicio, duracaoTotal);
+    this.atualizarInstanteReplay(tInicio);
   },
 
-  criarMarcadoresTimeline(eventos) {
+  desenharMarcadoresTimeline(eventos, tInicio, duracaoTotal) {
     const box = document.getElementById('box-markers-timeline');
     box.innerHTML = '';
 
-    const durTotal = this.replay.duracaoTotal;
+    for (const ev of eventos) {
+      const tEv = ev.tEfetivo ?? ev.t;
+      const pct = Math.min(100, Math.max(0, ((tEv - tInicio) / duracaoTotal) * 100));
 
-    eventos.forEach(ev => {
       let icone = null;
-      let rotulo = '';
+      let titulo = '';
 
       if (ev.tipo === 'anotacao') {
         icone = '📝';
-        rotulo = `Anotação: "${ev.texto}"`;
+        titulo = `Anotação: "${ev.texto}"`;
+      } else if (ev.inversaoCorrigida) {
+        icone = '⚡';
+        titulo = `Inversão corrigida no ponto ${ev.ponto}`;
       } else if (ev.tipo === 'anulacao') {
-        icone = '❌';
-        rotulo = `Pessoa ${ev.pessoa} Anulada`;
+        icone = '✕';
+        titulo = `Anulação da Pessoa ${ev.pessoa}`;
       } else if (ev.tipo === 'reversao') {
         icone = '↩';
-        rotulo = `Pessoa ${ev.pessoa} Revertida`;
+        titulo = `Reversão no ponto ${ev.ponto || ''}`;
+      } else if (ev.tipo === 'atribuicao') {
+        icone = '👤';
+        titulo = 'Reatribuição de pontos';
       }
 
       if (icone) {
-        const perc = Math.min(100, Math.max(0, ((ev.t - this.replay.tInicio) / durTotal) * 100));
-        const pin = document.createElement('span');
-        pin.className = 'marker-pin';
-        pin.style.left = `${perc}%`;
-        pin.title = `${formatarHoraLocal(ev.t)} - ${rotulo}`;
-        pin.textContent = icone;
-        pin.onclick = () => this.saltarParaInstante(ev.t);
-        box.appendChild(pin);
+        const marker = document.createElement('span');
+        marker.className = 'marker-pin';
+        marker.style.left = `${pct}%`;
+        marker.textContent = icone;
+        marker.title = `${formatarHoraLocal(tEv)} - ${titulo}`;
+        marker.onclick = () => {
+          this.pausarReplay();
+          this.atualizarInstanteReplay(tEv);
+        };
+        box.appendChild(marker);
       }
-    });
-  },
-
-  saltarParaInstante(t) {
-    this.replay.tAtual = Math.max(this.replay.tInicio, Math.min(this.replay.tFim, t));
-    const perc = ((this.replay.tAtual - this.replay.tInicio) / this.replay.duracaoTotal) * 1000;
-    document.getElementById('slider-timeline').value = perc;
-    this.atualizarInstanteReplay(this.replay.tAtual);
-  },
-
-  onSliderScrub(sliderVal) {
-    const frac = sliderVal / 1000;
-    const t = this.replay.tInicio + frac * this.replay.duracaoTotal;
-    this.replay.tAtual = t;
-    this.atualizarInstanteReplay(t);
-  },
-
-  atualizarInstanteReplay(t) {
-    const decorrido = Math.max(0, t - this.replay.tInicio);
-    document.getElementById('lbl-tempo-replay').textContent = formatarDuracao(decorrido).substring(3);
-
-    // Cálculo puro instantâneo do estado neste exato timestamp
-    const estado = derivarEstado(this.dadosCompletos.eventos, t);
-
-    // Contadores sincronizados
-    document.getElementById('rep-fila').textContent = estado.contadores.naFila;
-    document.getElementById('rep-atendidos').textContent = estado.contadores.atendidas;
-    document.getElementById('rep-chegadas').textContent = estado.contadores.chegadas;
-    document.getElementById('rep-anulados').textContent = estado.contadores.anuladas;
-    document.getElementById('rep-vazao').textContent = formatarNumero(estado.vazaoRecente, 1);
-
-    // Atualiza animação diretamente
-    if (this.animador) {
-      this.animador.renderizarEstado(estado, false);
     }
   },
 
   togglePlayPause() {
     if (this.replay.ativo) {
-      this.pararReplay();
+      this.pausarReplay();
     } else {
-      this.iniciarLoopReplay();
+      this.iniciarReplay();
     }
   },
 
-  iniciarLoopReplay() {
+  iniciarReplay() {
     this.replay.ativo = true;
     document.getElementById('btn-play-pause').textContent = '⏸ Pausar';
 
-    const intervaloMs = 100;
+    const intervaloTickMs = 80;
     this.replay.timer = setInterval(() => {
-      // Avanço proporcional à velocidade configurada
-      const avancoMs = intervaloMs * this.replay.velocidade;
-      this.replay.tAtual += avancoMs;
+      const incrementoSimuladoMs = intervaloTickMs * this.replay.velocidade;
+      const proximoT = this.replay.tAtual + incrementoSimuladoMs;
 
-      if (this.replay.tAtual >= this.replay.tFim) {
-        this.replay.tAtual = this.replay.tFim;
-        this.pararReplay();
+      if (proximoT >= this.replay.tFim) {
+        this.atualizarInstanteReplay(this.replay.tFim);
+        this.pausarReplay();
+      } else {
+        this.atualizarInstanteReplay(proximoT);
       }
-
-      const perc = ((this.replay.tAtual - this.replay.tInicio) / this.replay.duracaoTotal) * 1000;
-      document.getElementById('slider-timeline').value = perc;
-      this.atualizarInstanteReplay(this.replay.tAtual);
-    }, intervaloMs);
+    }, intervaloTickMs);
   },
 
-  pararReplay() {
+  pausarReplay() {
     this.replay.ativo = false;
     if (this.replay.timer) {
       clearInterval(this.replay.timer);
       this.replay.timer = null;
     }
-    const btn = document.getElementById('btn-play-pause');
-    if (btn) btn.textContent = '▶ Reproduzir';
+    document.getElementById('btn-play-pause').textContent = '▶ Reproduzir';
   },
 
   reiniciarReplay() {
-    this.pararReplay();
-    this.saltarParaInstante(this.replay.tInicio);
+    this.pausarReplay();
+    this.atualizarInstanteReplay(this.replay.tInicio);
   },
 
   setVelocidade(v) {
     this.replay.velocidade = v;
-    document.querySelectorAll('.btn-speed').forEach(b => {
-      b.classList.toggle('active', b.textContent === `${v}x`);
-    });
+    document.querySelectorAll('.btn-speed').forEach(b => b.classList.remove('active'));
+    event?.target?.classList.add('active');
+
+    if (this.replay.ativo) {
+      this.pausarReplay();
+      this.iniciarReplay();
+    }
   },
 
-  /* ==========================================================================
-     GRÁFICOS (CHART.JS 4.X)
-     ========================================================================== */
+  onSliderScrub(valPercentil) {
+    this.pausarReplay();
+    const tNovo = this.replay.tInicio + (valPercentil / 1000) * this.replay.duracaoTotal;
+    this.atualizarInstanteReplay(tNovo);
+  },
+
+  atualizarInstanteReplay(tInstante) {
+    this.replay.tAtual = tInstante;
+
+    const decorrido = Math.max(0, tInstante - this.replay.tInicio);
+    document.getElementById('lbl-tempo-replay').textContent = formatarDuracao(decorrido).substring(3);
+
+    const slider = document.getElementById('slider-timeline');
+    slider.value = Math.min(1000, Math.floor((decorrido / this.replay.duracaoTotal) * 1000));
+
+    // Deriva estado exato com a configuração de zonas da sessão gravada
+    const estadoInstante = derivarEstado(this.dadosCompletos.eventos, tInstante, this.dadosCompletos.meta.config);
+
+    if (this.animador) {
+      this.animador.renderizarEstado(estadoInstante, false);
+    }
+
+    // Atualiza contadores sincronizados com o replay
+    const boxCont = document.getElementById('replay-contadores-zonas');
+    boxCont.innerHTML = '';
+
+    for (const [zId, z] of Object.entries(estadoInstante.zonas)) {
+      const span = document.createElement('span');
+      span.innerHTML = `${z.nome}: <strong style="color:${z.cor}">${z.ocupacao}</strong>`;
+      boxCont.appendChild(span);
+    }
+    const spanSaiu = document.createElement('span');
+    spanSaiu.innerHTML = `Saídas: <strong style="color:var(--btn-atendimento-bg)">${estadoInstante.contadores.saidas}</strong>`;
+    boxCont.appendChild(spanSaiu);
+  },
+
+  // --------------------------------------------------------------------------
+  // GRÁFICOS ANALÍTICOS (CHART.JS)
+  // --------------------------------------------------------------------------
   renderizarGraficos(dados) {
-    const eventos = dados.eventos;
-    const metricas = dados.metricas;
-    const inicioMs = metricas.inicioMs;
-
-    // Destruir instâncias antigas
-    Object.keys(this.graficos).forEach(k => {
-      if (this.graficos[k]) this.graficos[k].destroy();
+    Object.values(this.graficos).forEach(g => {
+      if (g && typeof g.destroy === 'function') g.destroy();
     });
+    this.graficos = {};
 
-    const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-    const corTexto = isDark ? '#94a3b8' : '#64748b';
-    const corGrid = isDark ? '#334155' : '#e2e8f0';
+    const m = dados.metricas;
+    const eventos = dados.eventos;
+    const inicioMs = m.inicioMs;
+    const fimMs = m.fimMs;
 
-    // 1. Acumulado
-    const ctxAcumulado = document.getElementById('chart-acumulado');
-    if (ctxAcumulado) {
-      const labels = ['0m'];
-      const dataCheg = [0];
-      const dataAtend = [0];
-      let accC = 0;
-      let accA = 0;
+    // 1. Área empilhada de ocupação por zona
+    this.renderizarGraficoAreaEmpilhada(m);
 
-      for (const ev of eventos) {
-        if (ev.tipo === 'chegada') accC++;
-        if (ev.tipo === 'atendimento') accA++;
-        const m = ((ev.t - inicioMs) / 60000).toFixed(1);
-        labels.push(`${m}m`);
-        dataCheg.push(accC);
-        dataAtend.push(accA);
-      }
+    // 2. Curvas acumuladas por ponto
+    this.renderizarGraficoCurvasAcumuladas(dados);
 
-      this.graficos.acumulado = new Chart(ctxAcumulado, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [
-            { label: 'Chegadas', data: dataCheg, borderColor: '#15803d', stepped: true, borderWidth: 2 },
-            { label: 'Atendimentos', data: dataAtend, borderColor: '#1d4ed8', stepped: true, borderWidth: 2 }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { ticks: { color: corTexto, maxTicksLimit: 12 }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
-          }
-        }
-      });
-    }
+    // 3. Gráfico de barras de tempo médio por zona
+    this.renderizarGraficoBarrasZonas(m);
 
-    // 2. Fila no Tempo
-    const ctxFila = document.getElementById('chart-fila-tempo');
-    if (ctxFila && metricas.filaTempo.timeline) {
-      const labels = metricas.filaTempo.timeline.map(item => `${((item.t - inicioMs) / 60000).toFixed(1)}m`);
-      const valores = metricas.filaTempo.timeline.map(item => item.q);
-
-      this.graficos.fila = new Chart(ctxFila, {
-        type: 'line',
-        data: {
-          labels,
-          datasets: [{
-            label: 'Comprimento da Fila',
-            data: valores,
-            borderColor: '#d97706',
-            backgroundColor: 'rgba(217, 119, 6, 0.15)',
-            fill: true,
-            stepped: true,
-            borderWidth: 2
-          }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { ticks: { color: corTexto, maxTicksLimit: 12 }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
-          }
-        }
-      });
-    }
-
-    // 3. Blocos
-    const ctxBlocos = document.getElementById('chart-blocos');
-    if (ctxBlocos && metricas.vazaoBlocos.blocos) {
-      this.graficos.blocos = new Chart(ctxBlocos, {
-        type: 'bar',
-        data: {
-          labels: metricas.vazaoBlocos.blocos.map(b => b.rotulo),
-          datasets: [
-            { label: 'Chegadas', data: metricas.vazaoBlocos.blocos.map(b => b.chegadas), backgroundColor: '#15803d' },
-            { label: 'Atendimentos', data: metricas.vazaoBlocos.blocos.map(b => b.atendimentos), backgroundColor: '#1d4ed8' }
-          ]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { ticks: { color: corTexto }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
-          }
-        }
-      });
-    }
-
-    // 4. Histograma
-    const ctxHist = document.getElementById('chart-histograma');
-    if (ctxHist) {
-      const temposSeg = metricas.pessoas
-        .filter(p => p.status === 'atendida' && p.esperaMs !== null)
-        .map(p => Math.round(p.esperaMs / 1000));
-
-      const maxT = Math.max(...temposSeg, 60);
-      const nBins = 8;
-      const binSize = Math.max(15, Math.ceil(maxT / nBins));
-      const bins = Array(nBins).fill(0);
-      const binLabels = [];
-
-      for (let i = 0; i < nBins; i++) {
-        binLabels.push(`${i * binSize}-${(i + 1) * binSize}s`);
-      }
-
-      temposSeg.forEach(t => {
-        const idx = Math.min(nBins - 1, Math.floor(t / binSize));
-        bins[idx]++;
-      });
-
-      this.graficos.hist = new Chart(ctxHist, {
-        type: 'bar',
-        data: {
-          labels: binLabels,
-          datasets: [{ label: 'Frequência de Espera', data: bins, backgroundColor: '#2563eb' }]
-        },
-        options: {
-          responsive: true,
-          maintainAspectRatio: false,
-          scales: {
-            x: { ticks: { color: corTexto }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
-          }
-        }
-      });
-    }
+    // 4. Histograma de tempo
+    this.renderizarGraficoHistograma(m);
   },
 
-  /* ==========================================================================
-     TABELA DE PESSOAS E EXPORTAÇÃO
-     ========================================================================== */
+  renderizarGraficoAreaEmpilhada(metricas) {
+    const ctx = document.getElementById('chart-area-zonas')?.getContext('2d');
+    if (!ctx) return;
+
+    // Constrói linha do tempo consolidada para todas as zonas
+    const temposSet = new Set();
+    for (const z of Object.values(metricas.zonas)) {
+      (z.ocupacao.timeline || []).forEach(pt => temposSet.add(pt.t));
+    }
+    const temposOrdenados = Array.from(temposSet).sort((a, b) => a - b);
+
+    // Amostragem para suavidade (máximo 60 pontos no gráfico)
+    const passo = Math.max(1, Math.floor(temposOrdenados.length / 60));
+    const temposAmostrados = temposOrdenados.filter((_, i) => i % passo === 0);
+
+    const labels = temposAmostrados.map(t => formatarHoraLocal(t));
+    const datasets = Object.values(metricas.zonas).map(z => {
+      const data = temposAmostrados.map(t => {
+        const pt = (z.ocupacao.timeline || []).filter(p => p.t <= t).pop();
+        return pt ? pt.q : 0;
+      });
+
+      return {
+        label: z.nome,
+        data,
+        fill: true,
+        backgroundColor: z.cor + '44',
+        borderColor: z.cor,
+        borderWidth: 2,
+        tension: 0.2
+      };
+    });
+
+    this.graficos.areaEmpilhada = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        plugins: {
+          legend: { position: 'top' },
+          tooltip: { mode: 'index', intersect: false }
+        },
+        scales: {
+          x: { title: { display: true, text: 'Horário' } },
+          y: { stacked: true, title: { display: true, text: 'Alunos no Sistema' }, beginAtZero: true }
+        }
+      }
+    });
+  },
+
+  renderizarGraficoCurvasAcumuladas(dados) {
+    const ctx = document.getElementById('chart-acumulado-pontos')?.getContext('2d');
+    if (!ctx) return;
+
+    const pontos = dados.metricas.config.pontos || [];
+    const eventos = dados.eventos;
+    const tempos = [];
+    const duracaoMs = dados.metricas.duracaoTotalMs;
+    const inicioMs = dados.metricas.inicioMs;
+
+    const numPontosGrafico = 40;
+    for (let i = 0; i <= numPontosGrafico; i++) {
+      tempos.push(inicioMs + (i / numPontosGrafico) * duracaoMs);
+    }
+
+    const labels = tempos.map(t => formatarHoraLocal(t));
+    const cores = ['#8b5cf6', '#dc2626', '#16a34a', '#ec4899', '#f97316', '#06b6d4'];
+
+    const datasets = pontos.map((p, idx) => {
+      let acumulado = 0;
+      const data = tempos.map(t => {
+        const count = eventos.filter(ev => {
+          const tEv = ev.tEfetivo ?? ev.t;
+          if (tEv > t) return false;
+          if (p.de === 'origem') return ev.tipo === 'chegada';
+          const pontoId = ev.ponto || (ev.tipo === 'atendimento' ? 'z1->saida' : `${ev.de}->${ev.para}`);
+          return pontoId === p.id;
+        }).length;
+        return count;
+      });
+
+      return {
+        label: p.nome,
+        data,
+        borderColor: cores[idx % cores.length],
+        backgroundColor: cores[idx % cores.length],
+        borderWidth: 2,
+        fill: false,
+        tension: 0.1
+      };
+    });
+
+    this.graficos.acumulado = new Chart(ctx, {
+      type: 'line',
+      data: { labels, datasets },
+      options: {
+        responsive: true,
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          x: { title: { display: true, text: 'Horário' } },
+          y: { title: { display: true, text: 'Passagens Acumuladas' }, beginAtZero: true }
+        }
+      }
+    });
+  },
+
+  renderizarGraficoBarrasZonas(metricas) {
+    const ctx = document.getElementById('chart-barras-zonas')?.getContext('2d');
+    if (!ctx) return;
+
+    const zonas = Object.values(metricas.zonas);
+    const labels = zonas.map(z => z.nome);
+    const data = zonas.map(z => z.tempoMedioConcluidosSeg);
+    const backgroundColor = zonas.map(z => z.cor);
+
+    this.graficos.barras = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Tempo Médio na Zona (segundos)',
+          data,
+          backgroundColor
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          y: { title: { display: true, text: 'Segundos' }, beginAtZero: true }
+        }
+      }
+    });
+  },
+
+  renderizarGraficoHistograma(metricas) {
+    const ctx = document.getElementById('chart-histograma')?.getContext('2d');
+    if (!ctx) return;
+
+    const tempos = (metricas.pessoas || [])
+      .filter(p => p.tempoTotalMs !== null)
+      .map(p => Math.floor(p.tempoTotalMs / 1000));
+
+    if (tempos.length === 0) return;
+
+    const maxT = Math.max(...tempos, 60);
+    const nBins = 10;
+    const larguraBin = Math.max(10, Math.ceil(maxT / nBins));
+    const bins = new Array(nBins).fill(0);
+    const labels = [];
+
+    for (let i = 0; i < nBins; i++) {
+      labels.push(`${i * larguraBin}-${(i + 1) * larguraBin}s`);
+    }
+
+    for (const t of tempos) {
+      const idx = Math.min(nBins - 1, Math.floor(t / larguraBin));
+      bins[idx]++;
+    }
+
+    this.graficos.histograma = new Chart(ctx, {
+      type: 'bar',
+      data: {
+        labels,
+        datasets: [{
+          label: 'Frequência de Alunos',
+          data: bins,
+          backgroundColor: '#3b82f6'
+        }]
+      },
+      options: {
+        responsive: true,
+        plugins: { legend: { display: false } },
+        scales: {
+          x: { title: { display: true, text: 'Intervalo de Tempo no Sistema' } },
+          y: { title: { display: true, text: 'Quantidade de Alunos' }, beginAtZero: true }
+        }
+      }
+    });
+  },
+
+  // --------------------------------------------------------------------------
+  // TABELA DE PESSOAS DETALHADA (COM COLUNAS DINÂMICAS POR ZONA)
+  // --------------------------------------------------------------------------
   renderizarTabelaPessoas() {
     if (!this.dadosCompletos) return;
-    const pessoas = this.dadosCompletos.metricas.pessoas;
-    const busca = (document.getElementById('filtro-busca-tabela').value || '').toLowerCase();
-    const status = document.getElementById('filtro-status-tabela').value;
 
-    let filtradas = pessoas.filter(p => {
-      if (status !== 'todos' && p.status !== status) return false;
-      if (busca && !String(p.pessoa).includes(busca)) return false;
-      return true;
+    const thead = document.getElementById('tabela-pessoas-cabecalho');
+    const tbody = document.getElementById('tabela-pessoas-corpo');
+    const zonas = (this.dadosCompletos.metricas.config?.zonas || []).filter(z => z.habilitada !== false);
+
+    // Cabeçalho dinâmico
+    let th = '<tr><th onclick="HistoricoApp.ordenarTabela(\'pessoa\')">Pessoa ⬍</th>';
+    for (const z of zonas) {
+      th += `<th>Entrada ${z.nome}</th><th>Saída ${z.nome}</th><th>Tempo ${z.nome}</th>`;
+    }
+    th += '<th onclick="HistoricoApp.ordenarTabela(\'tempoTotalMs\')">Tempo Total ⬍</th><th>Situação</th></tr>';
+    thead.innerHTML = th;
+
+    // Filtros
+    const busca = document.getElementById('filtro-busca-tabela').value.toLowerCase().trim();
+    const filtroStatus = document.getElementById('filtro-status-tabela').value;
+
+    let lista = [...(this.dadosCompletos.metricas.pessoas || [])];
+
+    if (busca) {
+      lista = lista.filter(p => String(p.pessoa).includes(busca));
+    }
+    if (filtroStatus !== 'todos') {
+      lista = lista.filter(p => p.situacao === filtroStatus || p.status === filtroStatus);
+    }
+
+    // Ordenação
+    const col = this.ordenacaoTabela.coluna;
+    const asc = this.ordenacaoTabela.asc;
+    lista.sort((a, b) => {
+      const va = a[col] ?? 0;
+      const vb = b[col] ?? 0;
+      return asc ? (va > vb ? 1 : -1) : (va < vb ? 1 : -1);
     });
 
-    const { coluna, asc } = this.ordenacaoTabela;
-    filtradas.sort((a, b) => {
-      const vA = a[coluna] || 0;
-      const vB = b[coluna] || 0;
-      return asc ? (vA > vB ? 1 : -1) : (vA < vB ? 1 : -1);
-    });
+    tbody.innerHTML = '';
+    const slice = lista.slice(0, 100);
 
-    const corpo = document.getElementById('tabela-pessoas-corpo');
-    corpo.innerHTML = '';
-
-    filtradas.forEach(p => {
+    for (const p of slice) {
       const tr = document.createElement('tr');
-      tr.innerHTML = `
-        <td><strong>Pessoa ${p.pessoa}</strong></td>
-        <td>${formatarHoraLocal(p.chegadaMs)}</td>
-        <td>${p.atendimentoMs ? formatarHoraLocal(p.atendimentoMs) : '--'}</td>
-        <td>${p.esperaMs !== null ? `${formatarNumero(p.esperaMs / 1000, 1)} s` : '--'}</td>
-        <td>${p.intervaloAtendimentoMs !== null ? `${formatarNumero(p.intervaloAtendimentoMs / 1000, 1)} s` : '--'}</td>
-        <td>${p.dispositivoChegada || '--'}</td>
-        <td>${p.dispositivoAtendimento || '--'}</td>
-        <td><strong>${p.status.toUpperCase()}</strong></td>
-      `;
-      corpo.appendChild(tr);
-    });
+      let td = `<td><strong>Pessoa ${p.pessoa}</strong></td>`;
+
+      for (const z of zonas) {
+        const entr = p.zonaEntradaMs?.[z.id] ? formatarHoraLocal(p.zonaEntradaMs[z.id]) : '—';
+        const sai = p.zonaSaidaMs?.[z.id] ? formatarHoraLocal(p.zonaSaidaMs[z.id]) : '—';
+        const tempo = (p.tempoZonaMs?.[z.id] !== undefined && p.tempoZonaMs?.[z.id] !== null)
+          ? `${formatarNumero(p.tempoZonaMs[z.id] / 1000, 1)}s`
+          : '—';
+        const rotuloEst = z.modo === 'contagem' && tempo !== '—' ? ' <span class="badge-estimado">est.</span>' : '';
+
+        td += `<td>${entr}</td><td>${sai}</td><td>${tempo}${rotuloEst}</td>`;
+      }
+
+      const tempoTotal = p.tempoTotalMs !== null ? `${formatarNumero(p.tempoTotalMs / 1000, 1)}s` : '—';
+      let tagStatus = `<span class="status-badge" style="background:#22c55e22; color:#22c55e;">Concluído</span>`;
+      if (p.situacao === 'anulada') {
+        tagStatus = `<span class="status-badge" style="background:#ef444422; color:#ef4444;">Anulada</span>`;
+      } else if (p.situacao === 'em_zona') {
+        tagStatus = `<span class="status-badge" style="background:#eab30822; color:#eab308;">Na Fila</span>`;
+      }
+
+      td += `<td><strong>${tempoTotal}</strong></td><td>${tagStatus}</td>`;
+      tr.innerHTML = td;
+      tbody.appendChild(tr);
+    }
   },
 
   ordenarTabela(coluna) {
@@ -497,9 +634,17 @@ const HistoricoApp = {
     this.renderizarTabelaPessoas();
   },
 
+  // --------------------------------------------------------------------------
+  // EXPORTAÇÕES DE ARQUIVOS (CSV, JSON, COPIAR)
+  // --------------------------------------------------------------------------
   baixarCsvPessoas() {
     if (!this.sessaoAtual) return;
     window.location.href = `/api/sessoes/${this.sessaoAtual.id}/csv-pessoas`;
+  },
+
+  baixarCsvResumoZonas() {
+    if (!this.sessaoAtual) return;
+    window.location.href = `/api/sessoes/${this.sessaoAtual.id}/csv-resumo-zonas`;
   },
 
   baixarCsvEventos() {
@@ -522,164 +667,187 @@ const HistoricoApp = {
     const m = this.dadosCompletos.metricas;
     const meta = this.dadosCompletos.meta;
 
-    const texto = `=== RELATÓRIO DE DESEMPENHO DA FILA DO RU ===
-Sessão: ${meta.nome}
-Local: ${meta.local}
-Data/Início: ${new Date(m.inicioMs).toLocaleString('pt-BR')}
-Duração: ${formatarDuracao(m.duracaoTotalMs)} (${formatarNumero(m.duracaoMin, 1)} min)
+    let txt = `=== RESUMO DA COLETA - FILA RU ===\n`;
+    txt += `Sessão: ${meta.nome} (${meta.local})\n`;
+    txt += `Duração: ${formatarDuracao(m.duracaoTotalMs)} (${formatarNumero(m.duracaoMin, 1)} min)\n`;
+    txt += `Total de Chegadas: ${m.balanco.chegadas} (λ = ${formatarNumero(m.global.lambdaGlobal, 2)} p/min)\n`;
+    txt += `Total Concluídos: ${m.balanco.saidas} (Vazão = ${formatarNumero(m.vazaoGlobalPorMin, 2)} p/min)\n`;
+    txt += `Tempo Médio no Sistema: ${formatarNumero(m.global.tempoMedioSistemaSeg, 1)} seg\n\n`;
+    txt += `--- Desempenho por Zona ---\n`;
+    for (const z of Object.values(m.zonas)) {
+      txt += `• ${z.nome} (${z.modo}): L = ${formatarNumero(z.ocupacao.mediaPonderada, 1)}, Tempo = ${formatarNumero(z.tempoMedioConcluidosSeg, 1)}s, Little = ${formatarNumero(z.tempoMedioLittleSeg, 1)}s (Div: ${formatarNumero(z.divergenciaLittle.diffPerc, 1)}%)\n`;
+    }
 
---- TOTAIS E TAXAS ---
-• Chegadas: ${m.n_chegadas} (λ = ${formatarNumero(m.lambda, 2)} pessoas/min)
-• Atendimentos: ${m.n_atendimentos} (Vazão = ${formatarNumero(m.vazaoGlobalPorMin, 2)} pessoas/min)
-• Pessoas restantes na fila: ${m.n_na_fila}
-• Servidores (catracas): ${meta.config.servidores || 1}
-• Taxa de Serviço (μ): ${formatarNumero(m.muPorServidor, 2)} pessoas/min/servidor
-• Utilização (ρ): ${formatarNumero(m.utilizacao * 100, 1)}%
-
---- TEMPOS DE ESPERA ---
-• Espera Média: ${formatarDuracao(m.statsEspera.media * 1000).substring(3)}
-• Mediana: ${formatarDuracao(m.statsEspera.mediana * 1000).substring(3)}
-• P95: ${formatarDuracao(m.statsEspera.p95 * 1000).substring(3)}
-• Intervalo Médio na Catraca: ${formatarNumero(m.statsIntervalosAtend.media, 1)} s
-
---- COMPRIMENTO DA FILA ---
-• Média Ponderada no Tempo (L): ${formatarNumero(m.filaTempo.mediaPonderada, 1)} pessoas
-• Pico Máximo: ${m.filaTempo.max} pessoas (${formatarHoraLocal(m.filaTempo.instanteMaxMs)})
-• Lei de Little: L = ${formatarNumero(m.filaTempo.mediaPonderada, 1)} vs λ·W = ${formatarNumero(m.little.L_calculado_lambda_W, 1)} (Dif: ${formatarNumero(m.little.diffPerc, 1)}%)
-=============================================`;
-
-    navigator.clipboard.writeText(texto).then(() => {
-      alert('Resumo formatado copiado com sucesso para a área de transferência!');
-    }).catch(() => {
-      alert('Não foi possível copiar automaticamente.');
+    navigator.clipboard.writeText(txt).then(() => {
+      alert('Resumo copiado para a área de transferência!');
     });
   },
 
-  async renomearSessao(id) {
-    const novoNome = prompt('Digite o novo nome para esta sessão:');
-    if (!novoNome || !novoNome.trim()) return;
-
-    await fetch(`/api/sessoes/${id}/renomear`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ novoNome: novoNome.trim() })
-    });
-    this.carregarListaSessoes();
-  },
-
-  async excluirSessao(id) {
-    if (!confirm('Deseja realmente excluir permanentemente esta sessão e todos os seus logs?')) return;
-    await fetch(`/api/sessoes/${id}/excluir`, { method: 'POST' });
-    this.carregarListaSessoes();
-  },
-
-  abrirModalImportar() {
-    document.getElementById('modal-importar').classList.add('open');
-  },
-
-  fecharModais() {
-    document.querySelectorAll('.modal-backdrop').forEach(m => m.classList.remove('open'));
-  },
-
-  processarImportacaoArquivo() {
-    const fileInput = document.getElementById('file-import-json');
-    if (!fileInput.files || fileInput.files.length === 0) return;
-
-    const reader = new FileReader();
-    reader.onload = async (e) => {
-      try {
-        const resp = await fetch('/api/sessoes/importar', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: e.target.result
-        });
-        const res = await resp.json();
-        if (res.sucesso) {
-          this.fecharModais();
-          this.carregarListaSessoes();
-          alert('Sessão importada com sucesso!');
-        } else {
-          alert('Erro na importação: ' + res.erro);
-        }
-      } catch (err) {
-        alert('Erro ao enviar JSON: ' + err.message);
-      }
-    };
-    reader.readAsText(fileInput.files[0]);
-  },
-
+  // --------------------------------------------------------------------------
+  // COMPARAÇÃO ENTRE SESSÕES (APENAS ZONAS COMUNS)
+  // --------------------------------------------------------------------------
   async abrirModalComparar() {
+    const modal = document.getElementById('modal-comparar');
+    const container = document.getElementById('comparar-checkboxes');
+    container.innerHTML = 'Carregando sessões...';
+    modal.classList.add('open');
+
     const resp = await fetch('/api/sessoes');
     const sessoes = await resp.json();
-    const box = document.getElementById('comparar-checkboxes');
-    box.innerHTML = '';
+    container.innerHTML = '';
 
     sessoes.forEach((s, idx) => {
       const lbl = document.createElement('label');
       lbl.style.display = 'inline-flex';
       lbl.style.alignItems = 'center';
       lbl.style.gap = '6px';
-      lbl.style.fontSize = '0.85rem';
-      lbl.innerHTML = `<input type="checkbox" value="${s.id}" ${idx < 3 ? 'checked' : ''} onchange="HistoricoApp.renderizarTabelaComparacao()"> <span>${s.nome}</span>`;
-      box.appendChild(lbl);
+      lbl.style.fontSize = '0.82rem';
+      lbl.innerHTML = `
+        <input type="checkbox" class="chk-comparar" value="${s.id}" ${idx < 2 ? 'checked' : ''} onchange="HistoricoApp.executarComparacao()">
+        <span>${s.nome}</span>
+      `;
+      container.appendChild(lbl);
     });
 
-    this.renderizarTabelaComparacao();
-    document.getElementById('modal-comparar').classList.add('open');
+    this.executarComparacao();
   },
 
-  async renderizarTabelaComparacao() {
-    const cbs = document.querySelectorAll('#comparar-checkboxes input[type="checkbox"]:checked');
-    const ids = Array.from(cbs).map(c => c.value);
+  async executarComparacao() {
+    const selecionados = Array.from(document.querySelectorAll('.chk-comparar:checked')).map(c => c.value);
     const tabela = document.getElementById('tabela-comparacao');
 
-    if (ids.length === 0) {
-      tabela.innerHTML = '<tr><td style="padding:15px; text-align:center;">Selecione ao menos uma sessão.</td></tr>';
+    if (selecionados.length === 0) {
+      tabela.innerHTML = '<tr><td style="padding:15px; text-align:center;">Selecione ao menos uma sessão para comparar.</td></tr>';
       return;
     }
 
-    const sessoesDet = [];
-    for (const id of ids) {
+    const sessoesDados = await Promise.all(selecionados.map(async id => {
       const r = await fetch(`/api/sessoes/${id}`);
-      sessoesDet.push(await r.json());
-    }
+      return await r.json();
+    }));
 
-    let thead = '<tr><th>Métrica</th>';
-    sessoesDet.forEach(s => { thead += `<th>${s.meta.nome}</th>`; });
-    thead += '</tr>';
-
-    const linhas = [
-      { rotulo: 'Duração', fn: s => formatarDuracao(s.metricas.duracaoTotalMs) },
-      { rotulo: 'Chegadas (λ)', fn: s => `${s.metricas.n_chegadas} (${formatarNumero(s.metricas.lambda, 2)} p/m)` },
-      { rotulo: 'Atendimentos', fn: s => `${s.metricas.n_atendimentos} (Vazão: ${formatarNumero(s.metricas.vazaoGlobalPorMin, 2)})` },
-      { rotulo: 'Utilização (ρ)', fn: s => `${formatarNumero(s.metricas.utilizacao * 100, 1)}%` },
-      { rotulo: 'Fila Média (L)', fn: s => formatarNumero(s.metricas.filaTempo.mediaPonderada, 1) },
-      { rotulo: 'Pico da Fila', fn: s => s.metricas.filaTempo.max },
-      { rotulo: 'Espera Média', fn: s => formatarDuracao(s.metricas.statsEspera.media * 1000).substring(3) },
-      { rotulo: 'Espera P95', fn: s => formatarDuracao(s.metricas.statsEspera.p95 * 1000).substring(3) },
-      { rotulo: 'Intervalo Médio Catraca', fn: s => `${formatarNumero(s.metricas.statsIntervalosAtend.media, 1)} s` }
-    ];
-
-    let tbody = '';
-    linhas.forEach(l => {
-      tbody += `<tr><td><strong>${l.rotulo}</strong></td>`;
-      sessoesDet.forEach(s => { tbody += `<td>${l.fn(s)}</td>`; });
-      tbody += '</tr>';
+    // Identificar zonas comuns a todas as sessões selecionadas
+    const zonasDeCada = sessoesDados.map(s => {
+      const zs = (s.metricas.config?.zonas || []).filter(z => z.habilitada !== false);
+      return new Set(zs.map(z => z.id));
     });
 
-    tabela.innerHTML = `<thead>${thead}</thead><tbody>${tbody}</tbody>`;
+    const todasZonasIds = new Set(sessoesDados.flatMap(s => (s.metricas.config?.zonas || []).map(z => z.id)));
+
+    let html = '<thead><tr><th>Métrica</th>';
+    sessoesDados.forEach(s => {
+      html += `<th>${s.meta.nome}</th>`;
+    });
+    html += '</tr></thead><tbody>';
+
+    // Métricas Globais
+    html += '<tr><td><strong>Duração Observada</strong></td>' + sessoesDados.map(s => `<td>${formatarDuracao(s.metricas.duracaoTotalMs)}</td>`).join('') + '</tr>';
+    html += '<tr><td><strong>Total Chegadas</strong></td>' + sessoesDados.map(s => `<td>${s.metricas.balanco.chegadas}</td>`).join('') + '</tr>';
+    html += '<tr><td><strong>Total Concluídos</strong></td>' + sessoesDados.map(s => `<td>${s.metricas.balanco.saidas}</td>`).join('') + '</tr>';
+    html += '<tr><td><strong>Tempo Médio no Sistema</strong></td>' + sessoesDados.map(s => `<td>${formatarNumero(s.metricas.global.tempoMedioSistemaSeg, 1)} s</td>`).join('') + '</tr>';
+
+    // Linhas por Zona (indicando não aplicável caso ausente em alguma)
+    for (const zId of todasZonasIds) {
+      const nomeZona = sessoesDados.find(s => s.metricas.zonas[zId])?.metricas.zonas[zId]?.nome || zId;
+      html += `<tr style="background:var(--bg-subtle);"><td colspan="${sessoesDados.length + 1}"><strong>Zona: ${nomeZona}</strong></td></tr>`;
+
+      html += '<tr><td>• Tempo Médio Concluintes</td>' + sessoesDados.map(s => {
+        const z = s.metricas.zonas[zId];
+        return z ? `<td>${formatarNumero(z.tempoMedioConcluidosSeg, 1)} s</td>` : '<td style="color:var(--text-muted); font-style:italic;">N/A (zona não habilitada)</td>';
+      }).join('') + '</tr>';
+
+      html += '<tr><td>• Ocupação Média (L)</td>' + sessoesDados.map(s => {
+        const z = s.metricas.zonas[zId];
+        return z ? `<td>${formatarNumero(z.ocupacao.mediaPonderada, 2)}</td>` : '<td style="color:var(--text-muted); font-style:italic;">N/A</td>';
+      }).join('') + '</tr>';
+    }
+
+    html += '</tbody>';
+    tabela.innerHTML = html;
+  },
+
+  // --------------------------------------------------------------------------
+  // RENOMEAR, EXCLUIR E IMPORTAR
+  // --------------------------------------------------------------------------
+  async renomearSessao(id) {
+    const novoNome = prompt('Novo nome para a sessão:');
+    if (!novoNome) return;
+
+    const r = await fetch(`/api/sessoes/${id}/renomear`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ novoNome })
+    });
+    const res = await r.json();
+    if (res.sucesso) {
+      this.carregarListaSessoes();
+    }
+  },
+
+  async excluirSessao(id) {
+    if (!confirm('Deseja realmente excluir permanentemente esta sessão e todos os seus logs?')) {
+      return;
+    }
+
+    const r = await fetch(`/api/sessoes/${id}/excluir`, { method: 'POST' });
+    const res = await r.json();
+    if (res.sucesso) {
+      this.carregarListaSessoes();
+    } else {
+      alert('Erro: ' + res.erro);
+    }
+  },
+
+  abrirModalImportar() {
+    document.getElementById('modal-importar').classList.add('open');
+  },
+
+  processarImportacaoArquivo() {
+    const input = document.getElementById('file-import-json');
+    if (!input.files || input.files.length === 0) {
+      alert('Selecione um arquivo .json para importar.');
+      return;
+    }
+
+    const leitor = new FileReader();
+    leitor.onload = async (e) => {
+      try {
+        const dados = JSON.parse(e.target.result);
+        const r = await fetch('/api/sessoes/importar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(dados)
+        });
+        const res = await r.json();
+        if (res.sucesso) {
+          alert('Sessão importada com sucesso!');
+          this.fecharModais();
+          this.carregarListaSessoes();
+        } else {
+          alert('Erro ao importar: ' + res.erro);
+        }
+      } catch (err) {
+        alert('Arquivo inválido: ' + err.message);
+      }
+    };
+    leitor.readAsText(input.files[0]);
+  },
+
+  fecharModais() {
+    document.querySelectorAll('.modal-backdrop').forEach(m => m.classList.remove('open'));
   },
 
   toggleTheme() {
-    const current = document.documentElement.getAttribute('data-theme');
-    const next = current === 'dark' ? 'light' : 'dark';
-    document.documentElement.setAttribute('data-theme', next);
-    if (this.dadosCompletos) {
-      this.renderizarGraficos(this.dadosCompletos);
-    }
+    const atual = document.documentElement.getAttribute('data-theme');
+    const novo = atual === 'light' ? 'dark' : 'light';
+    document.documentElement.setAttribute('data-theme', novo);
+    localStorage.setItem('ru_theme', novo);
   }
 };
 
 window.HistoricoApp = HistoricoApp;
-document.addEventListener('DOMContentLoaded', () => HistoricoApp.init());
-
+document.addEventListener('DOMContentLoaded', () => {
+  const temaSalvo = localStorage.getItem('ru_theme');
+  if (temaSalvo) document.documentElement.setAttribute('data-theme', temaSalvo);
+  HistoricoApp.init();
+});

@@ -31,7 +31,7 @@
     .timeline-markers {
       position: relative;
       width: 100%;
-      height: 18px;
+      height: 20px;
       margin-top: 2px;
     }
     .marker-pin {
@@ -55,6 +55,15 @@
         grid-template-columns: repeat(4, 1fr);
       }
     }
+    .badge-estimado {
+      background: rgba(234, 179, 8, 0.15);
+      border: 1px solid var(--warning);
+      color: var(--warning);
+      font-size: 0.7rem;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-weight: 700;
+    }
   </style>
 </head>
 <body>
@@ -68,6 +77,7 @@
     <nav class="header-nav">
       <a href="painel.html">Painel ao Vivo</a>
       <a href="historico.html" class="active">Histórico & Análises</a>
+      <a href="pontos.html" target="_blank">QR Codes dos Pontos 🖨</a>
       <a href="celular.html" target="_blank">Abrir Celular ↗</a>
     </nav>
 
@@ -111,13 +121,14 @@
             <p id="rel-obs" style="font-size:0.85rem; margin-top:4px; font-style:italic; color:var(--text-main);"></p>
           </div>
 
-          <div class="btn-group no-print">
+          <div class="btn-group no-print" style="flex-wrap:wrap;">
             <button class="btn btn-secondary" onclick="HistoricoApp.copiarResumo()">📋 Copiar Resumo</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvPessoas()">📄 CSV Pessoas</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvResumoZonas()">📊 CSV Resumo Zonas</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvEventos()">📝 CSV Eventos</button>
-            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvMetricas()">📊 CSV Métricas</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvMetricas()">📈 CSV Métricas</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarBackupJson()">💾 Backup JSON</button>
-            <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir</button>
+            <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir Relatório</button>
           </div>
         </div>
       </div>
@@ -125,11 +136,11 @@
       <!-- PLAYER DE REPRODUÇÃO DA FILA -->
       <div class="card no-print">
         <div class="card-title">
-          <span>🎬 Reprodução da Fila ao Longo do Tempo</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">Estado exato calculado por derivarEstado(eventos, t)</span>
+          <span>🎬 Reprodução Fiel do Percurso ao Longo do Tempo</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Reconstruído a partir do log com todas as zonas gravadas</span>
         </div>
 
-        <div class="animacao-container grande" id="container-animacao-replay" style="height:210px;"></div>
+        <div class="animacao-container grande" id="container-animacao-replay" style="height:230px;"></div>
 
         <!-- Controles do Player e Barra de Tempo -->
         <div class="player-controls">
@@ -156,17 +167,11 @@
           </div>
 
           <!-- Contadores Sincronizados com o Instante Replay -->
-          <div style="display:flex; gap:16px; font-size:0.8rem; font-weight:700; color:var(--text-muted); width:100%;">
-            <span>Fila: <strong id="rep-fila" style="color:var(--warning)">0</strong></span>
-            <span>Atendidos: <strong id="rep-atendidos" style="color:var(--btn-atendimento-bg)">0</strong></span>
-            <span>Chegadas: <strong id="rep-chegadas" style="color:var(--btn-chegada-bg)">0</strong></span>
-            <span>Anulados: <strong id="rep-anulados">0</strong></span>
-            <span>Vazão Recente: <strong id="rep-vazao">0,0</strong> p/min</span>
-          </div>
+          <div id="replay-contadores-zonas" style="display:flex; gap:16px; font-size:0.8rem; font-weight:700; color:var(--text-muted); width:100%; flex-wrap:wrap;"></div>
         </div>
       </div>
 
-      <!-- KPIS CONSOLIDADOS -->
+      <!-- KPIS CONSOLIDADOS DO SISTEMA -->
       <div class="kpi-grid-relatorio">
         <div class="hud-stat">
           <span class="label">Total Chegadas (λ)</span>
@@ -175,111 +180,106 @@
         </div>
 
         <div class="hud-stat">
-          <span class="label">Total Atendidos (Vazão)</span>
+          <span class="label">Total Concluídos (Saídas)</span>
           <span class="value" id="kpi-atend">0</span>
           <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-vazao-global">Vazão = 0,00 p/min</span>
         </div>
 
         <div class="hud-stat">
-          <span class="label">Utilização (ρ)</span>
-          <span class="value" id="kpi-util">0,0%</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">ρ = λ / (c·μ)</span>
+          <span class="label">Tempo Médio no Sistema</span>
+          <span class="value" id="kpi-tempo-sistema">00:00</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-tempo-sistema-seg">0,0 seg</span>
         </div>
 
         <div class="hud-stat">
-          <span class="label">Fila Média (L)</span>
+          <span class="label">Pessoas no Sistema (L)</span>
           <span class="value" id="kpi-l">0,0</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pico">Pico: 0 pessoas</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Tempo de Espera Médio</span>
-          <span class="value" id="kpi-espera-media">00:00</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-espera-mediana">Mediana: 00:00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Espera P90 / P95</span>
-          <span class="value" id="kpi-p95">00:00</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-p90">P90: 00:00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Intervalo Médio Catraca</span>
-          <span class="value" id="kpi-int-media">0,0 s</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-int-cv">CV: 0,00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Ociosidade da Catraca</span>
-          <span class="value" id="kpi-ocioso">0,0%</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pausas">0 pausas longas</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pico">Pico Total: 0</span>
         </div>
       </div>
 
-      <!-- Lei de Little & Modelo Teórico Erlang C -->
+      <!-- TABELA ANALÍTICA POR ZONA -->
+      <div class="card">
+        <div class="card-title">
+          <span>Desempenho por Zona de Coleta</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Identificação de gargalos e conformidade com Lei de Little</span>
+        </div>
+        <div class="table-container">
+          <table id="tabela-metricas-zonas">
+            <thead>
+              <tr>
+                <th>Zona</th>
+                <th>Modo</th>
+                <th>Entradas</th>
+                <th>Saídas</th>
+                <th>Ocupação Média (L)</th>
+                <th>Tempo Médio</th>
+                <th>Little (L/λ)</th>
+                <th>Divergência</th>
+                <th>P90 / P95</th>
+                <th>Vazão Saída</th>
+                <th>Part. Tempo</th>
+              </tr>
+            </thead>
+            <tbody id="corpo-metricas-zonas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- Balanço de Consistência e Qualidade de Dados -->
       <div class="form-grid">
         <div class="card">
-          <div class="card-title"><span>Lei de Little (L = λ · W)</span></div>
-          <div id="box-little-info" style="font-size:0.88rem; line-height:1.6;"></div>
+          <div class="card-title"><span>Balanço Estrito de Consistência</span></div>
+          <div id="box-balanco-info" style="font-size:0.88rem; line-height:1.6;"></div>
         </div>
 
         <div class="card">
-          <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
-          <div id="box-teorico-info" style="font-size:0.88rem; line-height:1.6;"></div>
+          <div class="card-title"><span>Qualidade dos Dados e Auditoria</span></div>
+          <div id="box-qualidade-info" style="font-size:0.88rem; line-height:1.6;"></div>
         </div>
       </div>
 
-      <!-- GRÁFICOS (CHART.JS) -->
+      <!-- GRÁFICOS ANALÍTICOS (CHART.JS) -->
       <div class="chart-container">
-        <div class="card-title"><span>Curvas Acumuladas de Chegadas e Atendimentos</span></div>
-        <canvas id="chart-acumulado"></canvas>
+        <div class="card-title"><span>Ocupação por Zona ao Longo do Tempo (Área Empilhada)</span></div>
+        <canvas id="chart-area-zonas"></canvas>
       </div>
 
       <div class="chart-container">
-        <div class="card-title"><span>Comprimento da Fila ao Longo do Tempo</span></div>
-        <canvas id="chart-fila-tempo"></canvas>
+        <div class="card-title"><span>Curvas Acumuladas por Ponto de Verificação</span></div>
+        <canvas id="chart-acumulado-pontos"></canvas>
       </div>
 
-      <div class="chart-container">
-        <div class="card-title"><span>Chegadas e Atendimentos por Bloco (5 min)</span></div>
-        <canvas id="chart-blocos"></canvas>
-      </div>
+      <div class="form-grid">
+        <div class="chart-container">
+          <div class="card-title"><span>Tempo Médio por Zona (Gargalos)</span></div>
+          <canvas id="chart-barras-zonas"></canvas>
+        </div>
 
-      <div class="chart-container">
-        <div class="card-title"><span>Distribuição dos Tempos de Espera (Histograma)</span></div>
-        <canvas id="chart-histograma"></canvas>
+        <div class="chart-container">
+          <div class="card-title"><span>Distribuição dos Tempos nas Zonas (Histograma)</span></div>
+          <canvas id="chart-histograma"></canvas>
+        </div>
       </div>
 
       <!-- TABELA DETALHADA DE PESSOAS -->
       <div class="card">
         <div class="card-title" style="flex-wrap:wrap; gap:8px;">
-          <span>Tabela Detalhada de Pessoas</span>
+          <span>Tabela Detalhada de Alunos / Pessoas</span>
           <div style="display:flex; gap:8px;">
             <input type="text" id="filtro-busca-tabela" placeholder="Buscar pessoa..." style="padding:4px 8px; font-size:0.85rem;" oninput="HistoricoApp.renderizarTabelaPessoas()">
             <select id="filtro-status-tabela" style="padding:4px 8px; font-size:0.85rem;" onchange="HistoricoApp.renderizarTabelaPessoas()">
               <option value="todos">Todos</option>
-              <option value="atendida">Atendidas</option>
-              <option value="anulada">Anuladas</option>
-              <option value="esperando">Na Fila</option>
+              <option value="saiu">Concluídos (Saíram)</option>
+              <option value="em_zona">Em Zona</option>
+              <option value="anulada">Anulados</option>
             </select>
           </div>
         </div>
 
         <div class="table-container">
           <table>
-            <thead>
-              <tr>
-                <th onclick="HistoricoApp.ordenarTabela('pessoa')">Pessoa ⬍</th>
-                <th onclick="HistoricoApp.ordenarTabela('chegadaMs')">Chegada ⬍</th>
-                <th onclick="HistoricoApp.ordenarTabela('atendimentoMs')">Atendimento ⬍</th>
-                <th onclick="HistoricoApp.ordenarTabela('esperaMs')">Espera ⬍</th>
-                <th onclick="HistoricoApp.ordenarTabela('intervaloAtendimentoMs')">Intervalo ⬍</th>
-                <th>Disp. Chegada</th>
-                <th>Disp. Atendimento</th>
-                <th>Situação</th>
-              </tr>
-            </thead>
+            <thead id="tabela-pessoas-cabecalho"></thead>
             <tbody id="tabela-pessoas-corpo"></tbody>
           </table>
         </div>
@@ -291,13 +291,13 @@
 
   <!-- Modais de Comparação e Importação -->
   <div class="modal-backdrop" id="modal-comparar">
-    <div class="modal-dialog" style="max-width:850px;">
+    <div class="modal-dialog" style="max-width:900px;">
       <div class="modal-title">
         <span>Comparação de Sessões Lado a Lado</span>
         <button class="btn btn-secondary" onclick="HistoricoApp.fecharModais()">✕</button>
       </div>
       <div id="comparar-checkboxes" style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;"></div>
-      <div class="table-container" style="max-height:400px;">
+      <div class="table-container" style="max-height:420px;">
         <table id="tabela-comparacao"></table>
       </div>
     </div>
@@ -320,4 +320,3 @@
   <script type="module" src="historico.js"></script>
 </body>
 </html>
-

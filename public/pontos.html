@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Pontos de Verificação — Fila RU</title>
+  <link rel="stylesheet" href="estilo.css">
+  <style>
+    body {
+      background: #f8fafc;
+      color: #0f172a;
+      padding: 20px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    }
+    .header-pontos {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 24px;
+      border-bottom: 2px solid #e2e8f0;
+      padding-bottom: 16px;
+    }
+    .grid-pontos {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 20px;
+    }
+    .card-ponto {
+      background: #ffffff;
+      border: 2px solid #cbd5e1;
+      border-radius: 12px;
+      padding: 16px;
+      text-align: center;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+      page-break-inside: avoid;
+    }
+    .card-ponto-header {
+      background: #0f172a;
+      color: #ffffff;
+      padding: 8px 12px;
+      border-radius: 8px;
+      margin-bottom: 12px;
+    }
+    .ponto-numero {
+      font-size: 0.8rem;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      opacity: 0.8;
+    }
+    .ponto-titulo {
+      font-size: 1.25rem;
+      font-weight: 800;
+      margin: 2px 0 0 0;
+    }
+    .ponto-trajeto {
+      font-size: 0.85rem;
+      color: #64748b;
+      margin-bottom: 12px;
+      font-weight: 600;
+    }
+    .ponto-qr img {
+      width: 200px;
+      height: 200px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      margin: 0 auto;
+      display: block;
+    }
+    .ponto-pin {
+      font-size: 0.9rem;
+      margin-top: 10px;
+      font-weight: 700;
+      color: #1e293b;
+    }
+    .ponto-pin span {
+      font-size: 1.3rem;
+      color: #2563eb;
+      letter-spacing: 2px;
+    }
+    .ponto-instrucao {
+      font-size: 0.78rem;
+      color: #64748b;
+      margin-top: 8px;
+      border-top: 1px dashed #e2e8f0;
+      padding-top: 8px;
+    }
+
+    @media print {
+      body {
+        background: #ffffff;
+        padding: 0;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .grid-pontos {
+        grid-template-columns: repeat(2, 1fr);
+        gap: 16px;
+      }
+      .card-ponto {
+        border: 2px solid #000000;
+        box-shadow: none;
+      }
+      .card-ponto-header {
+        background: #000000 !important;
+        color: #ffffff !important;
+        -webkit-print-color-adjust: exact;
+        print-color-adjust: exact;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <div class="header-pontos">
+    <div>
+      <h1 style="font-size:1.5rem; margin:0 0 4px 0;">🍽️ Pontos de Verificação — Fila RU</h1>
+      <p style="margin:0; font-size:0.9rem; color:#64748b;">
+        Cartões individuais com QR Code para autoatribuição dos aparelhos aos pontos de coleta.
+      </p>
+    </div>
+    <div class="no-print" style="display:flex; gap:10px; align-items:center;">
+      <a href="/painel.html" class="btn btn-secondary">← Voltar ao Painel</a>
+      <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir Cartões</button>
+    </div>
+  </div>
+
+  <div id="container-pontos" class="grid-pontos">
+    <div style="text-align:center; padding:40px; color:#64748b; grid-column:1/-1;">
+      Carregando pontos de verificação e gerando QR Codes...
+    </div>
+  </div>
+
+  <script type="module">
+    async function carregarPontos() {
+      try {
+        const resp = await fetch('/api/pontos-qr');
+        const dados = await resp.json();
+        const container = document.getElementById('container-pontos');
+        container.innerHTML = '';
+
+        if (!dados.pontos || dados.pontos.length === 0) {
+          container.innerHTML = '<div style="text-align:center; padding:40px; color:#64748b;">Nenhum ponto configurado.</div>';
+          return;
+        }
+
+        dados.pontos.forEach((p, idx) => {
+          const card = document.createElement('div');
+          card.className = 'card-ponto';
+
+          let trajetoTexto = `${p.de.toUpperCase()} → ${p.para.toUpperCase()}`;
+          if (p.de === 'origem') trajetoTexto = 'Entrada na Fila Externa';
+          else if (p.para === 'saida') trajetoTexto = 'Saída Final do Restaurante';
+
+          card.innerHTML = `
+            <div class="card-ponto-header">
+              <div class="ponto-numero">Ponto P${idx}</div>
+              <div class="ponto-titulo">${p.nome}</div>
+            </div>
+            <div class="ponto-trajeto">${trajetoTexto}</div>
+            <div class="ponto-qr">
+              <img src="${p.qrDataUrl}" alt="QR Code Ponto ${idx}">
+            </div>
+            <div class="ponto-pin">
+              PIN DE ACESSO: <span>${dados.pin}</span>
+            </div>
+            <div class="ponto-instrucao">
+              Aponte a câmera do celular para este código para assumir este ponto de verificação.
+            </div>
+          `;
+          container.appendChild(card);
+        });
+      } catch (err) {
+        document.getElementById('container-pontos').innerHTML = `
+          <div style="color:red; text-align:center; padding:20px;">
+            Erro ao carregar QR codes dos pontos: ${err.message}
+          </div>
+        `;
+      }
+    }
+
+    carregarPontos();
+  </script>
+</body>
+</html>
+

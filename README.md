@@ -1,6 +1,10 @@
-# Sistema Colaborativo de Coleta da Fila do RU
+# Sistema Colaborativo de Coleta da Fila do RU (Multi-Zonas)
 
-Sistema web para coleta e análise em tempo real do desempenho da fila do Restaurante Universitário (RU). O notebook atua como servidor local via hotspot móvel do Windows, e múltiplos celulares se conectam via navegador para registro colaborativo e sincronizado das chegadas e atendimentos.
+Sistema web para coleta e análise em tempo real do percurso completo dos alunos no Restaurante Universitário (RU), dividido em **zonas configuráveis** com múltiplos **pontos de verificação**.
+
+O notebook atua como servidor local via Hotspot Móvel do Windows, e múltiplos smartphones conectam-se via navegador sem necessidade de instalar aplicativos ou acesso à internet.
+
+> 📖 **Documentação Completa**: Consulte o arquivo [LEIA-ME.md](file:///c:/Users/ghost/Documents/outubro/fila-ru/LEIA-ME.md) para o guia aprofundado sobre configuração de zonas, presets, papéis, compensação de inversão temporal e roteiro de ensaio prévio.
 
 ---
 
@@ -12,110 +16,93 @@ Sistema web para coleta e análise em tempo real do desempenho da fila do Restau
 
 ---
 
-## 🚀 Instalação e Preparação Inicial (com Internet)
+## 🚀 Instalação e Testes
 
-1. Abra o terminal (PowerShell ou Prompt de Comando) na pasta do projeto `fila-ru`:
+1. Abra o terminal (PowerShell ou Prompt de Comando) na pasta do projeto:
     ```bash
     cd fila-ru
     ```
-2. Instale as duas únicas dependências de produção (`ws` e `qrcode`):
+2. Instale as dependências locais (`ws` e `qrcode`):
     ```bash
     npm install
     ```
-3. Execute a suíte de testes automatizados para verificar a integridade matemática do sistema:
+3. Execute a suíte de testes automatizados com 100% de cobertura (20 suítes):
     ```bash
     node teste/testes.js
     ```
-    _(Todos os 47 testes devem ser aprovados com sucesso)._
+    _(Todos os 102 testes devem ser aprovados com sucesso)._
 
 ---
 
 ## 📡 Configuração do Ponto de Acesso (Hotspot do Windows)
 
-1. No Windows, abra **Configurações** (`Win + I`) > **Rede e Internet** > **Hotspot móvel** (Mobile Hotspot).
+1. No Windows, abra **Configurações** (`Win + I`) > **Rede e Internet** > **Hotspot móvel**.
 2. Configure o nome da rede (SSID) e defina uma senha simples (ex.: `filaderu123`).
-3. Ative a chave **"Compartilhar minha conexão de Internet"** (ou ative o ponto de acesso).
-    - O endereço IPv4 padrão atribuído pelo Windows ao adaptador de hotspot é **`192.168.137.1`**.
+3. Ative a chave **"Compartilhar minha conexão de Internet"** (endereço padrão: `192.168.137.1`).
 4. **Firewall do Windows**:
-    - Na primeira execução do Node.js, uma janela do Firewall do Windows pode solicitar permissão. Marque a caixa **"Redes privadas"** (Private Networks) e clique em **Permitir acesso**.
+   - Caso solicitado na primeira execução do Node.js, marque a caixa **"Redes privadas"** e clique em **Permitir acesso**.
 
 ---
 
 ## ▶️ Iniciando o Servidor
 
-1. Dê um duplo clique no arquivo **`iniciar.bat`** (ou execute no terminal `node server/server.js`).
+1. Dê um duplo clique no arquivo **`iniciar.bat`** (ou execute `node server/server.js`).
 2. O terminal exibirá:
-    - O endereço IP detectado (ex: `192.168.137.1:3000`).
-    - O **PIN de acesso de 4 dígitos** gerado para a sessão (ex: `>>> 5832 <<<`).
-    - A URL do Painel do Notebook: `http://localhost:3000/painel.html`.
-    - Um **QR Code ASCII** desenhado diretamente no terminal.
+   - O endereço IP detectado (ex: `http://192.168.137.1:3000`).
+   - O **PIN de acesso de 4 dígitos** gerado para a sessão.
+   - A URL do Painel do Notebook: `http://localhost:3000/painel.html`.
+   - A página de cartões QR por ponto: `http://localhost:3000/pontos.html`.
+   - Um **QR Code ASCII** desenhado diretamente no terminal.
 
 ---
 
-## 📱 Conectando os Celulares dos Operadores
+## 🏷️ Cartões de Ponto e Autoatribuição (`/pontos.html`)
 
-1. No celular de cada operador, conecte-se à rede Wi-Fi do hotspot do notebook.
-2. Abra a câmera ou o navegador do celular e aponte para o QR Code (ou digite no navegador: `http://192.168.137.1:3000/celular.html`).
-3. O celular solicitará o **PIN de 4 dígitos** e o **Nome do Aparelho** (ex: _Celular 1 - Entrada_, _Celular 2 - Catraca_).
-4. Opcionalmente, selecione o papel do aparelho:
-    - **Completo**: exibe os botões de CHEGADA e ATENDIDO.
-    - **Somente Chegadas**: exibe apenas o botão de CHEGADA (ideal para quem fica na porta).
-    - **Somente Atendimentos**: exibe apenas o botão ATENDIDO (ideal para quem fica junto à catraca).
-5. O painel do notebook confirmará a conexão de cada celular em tempo real.
+1. Acesse `http://localhost:3000/pontos.html` no notebook e imprima a folha de cartões em formato A4.
+2. Fixe os cartões impressos em cada ponto físico:
+   - **P0: Chegada** (porta de entrada).
+   - **P1: Catraca** (passagem para o balcão).
+   - **P2: Saída do atendimento** (término do balcão de servir).
+   - **P3: Saída das mesas** (saída do refeitório).
+3. Cada avaliador aponta a câmera do celular para o QR Code do seu posto, insere o PIN e seu nome.
+4. O celular é automaticamente atribuído àquele ponto (`autoatribuição`), adaptando sua interface de toque.
 
 ---
 
-## ⏱️ Conduzindo uma Coleta em Campo
+## 👥 Delegação de Aparelhos e Papéis
+
+No painel do notebook (`/painel.html`), a aba **"Delegação"** permite gerenciar quem opera em cada ponto:
+- **Matriz de Aparelhos x Pontos**: ajuste dinâmico em tempo real com sincronização imediata via WebSocket.
+- **Distribuição Automática**: distribui os pontos contiguamente entre os aparelhos conectados (ex.: 4 aparelhos = 1 por ponto; 2 aparelhos = P0+P1 e P2+P3).
+- **Operador Único**: atribui todos os pontos ao mesmo aparelho (ideal para ensaios ou coletas individuais).
+- **Papéis**:
+  - `avaliador`: restrito aos pontos atribuídos (tentativa fora do ponto gera `PONTO_NAO_ATRIBUIDO`).
+  - `supervisor`: controle irrestrito sobre todos os pontos.
+  - `observador`: modo somente visualização e acompanhamento da animação em tempo real.
+
+---
+
+## ⏱️ Conduzindo a Coleta
 
 1. **No Notebook**:
-    - Abra o painel no navegador: `http://localhost:3000/painel.html`.
-    - Preencha o nome da observação (ex.: _Almoço RU - Quinta-feira_), número de servidores/catracas (padrão 1), duração prevista (padrão 60 min) e clique em **▶ Iniciar Nova Sessão**.
+   - Na aba **Zonas**, selecione o modelo desejado (*Completo*, *Fila + Atendimento*, *Somente Fila* ou personalizado).
+   - Clique em **▶ Iniciar Nova Sessão** (a estrutura de zonas é travada no início).
 2. **Nos Celulares**:
-    - O botão **CHEGADA** (verde escuro) adiciona uma pessoa à fila.
-    - O botão **ATENDIDO** (azul) exibe a pessoa na catraca (ex: _Confirmar Pessoa 12_). Ao ser pressionado, a pessoa passa para atendida e o próximo avança.
-    - O botão fica desabilitado se a fila estiver vazia.
-    - Concorrência protegida: se dois operadores tocarem em "ATENDIDO" simultaneamente, o servidor valida o primeiro e avisa o segundo (`JA_ATENDIDO`).
-    - Desistências/Anulações: use o botão `×` na tag da pessoa para anulá-la da fila com confirmação.
-    - Erros operacionais: use **"Reverter Último"** para devolver a última pessoa atendida à catraca.
-    - Anotações: use o botão **📝 Anotação** para registrar paradas operacionais (_catraca travou_, _reposição de bandejas_).
+   - O avaliador visualiza o botão de registro correspondente ao seu ponto (ex.: **CHEGADA** em P0; **REGISTRAR PASSAGEM** com indicação da próxima pessoa FIFO em P1 e P2; **SAIU +1** com ocupação atual em P3).
+   - Multiplicador de lote (`x1`, `x2`, `x3`, `x5`) para grupos de alunos.
+   - Compensação automática de inversão temporal: se um avaliador a jusante registrar frações de segundo antes do anterior, o comando fica pendente até a chegada do registro a montante, corrigindo o timestamp efetivo ($t_{efetivo} = \min(t_{montante}, t_{jusante})$).
+   - Ações de correção: **Desfazer** (reversão com bloqueio caso a pessoa já tenha avançado) e **Anulação** (`×`).
 3. **Ao Término**:
-    - No painel do notebook, clique em **⏹ Encerrar Sessão** e confirme. Todos os celulares são notificados e os relatórios ficam disponíveis.
+   - Clique em **⏹ Encerrar Sessão** no painel do notebook.
 
 ---
 
-## 📊 Exportação de Dados e Análise
+## 📊 Exportação de Dados e Histórico (`/historico.html`)
 
-Acesse a página **`http://localhost:3000/historico.html`**:
-
-- **Reprodução Fiel**: Assista à animação acelerada em 1x, 5x, 10x ou 60x, ou deslize a barra de tempo para qualquer minuto (o estado é recalculado instantaneamente via `derivarEstado`).
-- **CSV Pessoas**: Arquivo com separador `;`, formato UTF-8 com BOM e decimais com vírgula para abertura direta no Microsoft Excel brasileiro.
-- **CSV Métricas**: Relatório consolidado com Taxa de Chegada ($\lambda$), Taxa de Serviço ($\mu$), Utilização ($\rho$), Fila Média Ponderada ($L$), Tempos de Espera (Média, Mediana, P90, P95) e teste da Lei de Little ($L = \lambda W$).
-- **JSON Backup**: Backup integral da sessão e eventos para importação em outros computadores.
-- **Imprimir**: Relatório formatado em layout limpo para PDF via `window.print()`.
-
----
-
-## 🛠️ Solução de Problemas em Campo
-
-| Problema                                            | Causa Provável                                                           | Solução                                                                                                                                                                                                                                             |
-| :-------------------------------------------------- | :----------------------------------------------------------------------- | :-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Hotspot do Windows não liga sem internet**        | O Windows às vezes recusa ativar o hotspot sem conexão externa ativa.    | **Solução rápida**: Conecte o notebook momentaneamente aos dados móveis 4G do celular apenas para ativar o hotspot; depois de ligado, a rede local funcionará sem gastar dados. Como alternativa, use um mini roteador Wi-Fi portátil sem internet. |
-| **Celular troca sozinho para dados móveis (4G/5G)** | O Android/iOS detecta que o Wi-Fi não tem internet e desativa a conexão. | **Ação obrigatória**: Nas configurações do Wi-Fi do celular, ao conectar na rede do notebook, escolha **"Manter conexão Wi-Fi mesmo sem internet"** e desative temporariamente os Dados Móveis do celular durante a coleta.                         |
-| **A tela do celular bloqueia/apaga**                | HTTP local bloqueia a API Screen Wake Lock por não ser HTTPS.            | Desative o bloqueio automático de tela nas configurações do celular (definir tempo limite de tela para 30 minutos ou "Nunca") durante a hora de coleta.                                                                                             |
-| **Queda temporária de Wi-Fi no celular**            | Operador se afastou muito do notebook.                                   | O aplicativo possui **fila de saída offline**: os botões continuam funcionando, os eventos ficam salvos no `localStorage` do celular e são sincronizados e descarregados automaticamente em ordem assim que o sinal for restabelecido.              |
-| **Celular não abre o endereço IP**                  | Firewall do Windows bloqueando a porta 3000 em redes públicas.           | No Windows, configure a rede do hotspot como "Rede Privada" ou adicione uma regra no Firewall do Windows liberando a porta `3000` (TCP).                                                                                                            |
-
----
-
-## 🧪 Roteiro de Teste Prévio no Local (Checklist)
-
-Realize este ensaio de 5 minutos antes do início do horário de pico do RU:
-
-1. [x] Notebook ligado à tomada com Hotspot do Windows ativado.
-2. [x] Servidor iniciado via `iniciar.bat`. PIN visível no terminal e no painel.
-3. [x] Todos os celulares dos operadores conectados ao Wi-Fi do notebook e com Dados Móveis desligados.
-4. [x] Cada celular abre a página pelo QR Code, insere o PIN e aparece listado no painel do notebook.
-5. [x] No painel, clique em **"Simular Coleta de Teste"** e observe a animação da fila no notebook e nos celulares.
-6. [x] No celular 1, pressione "CHEGADA" e verifique se a Pessoa 1 surge na tela de todos os aparelhos em menos de 1 segundo.
-7. [x] No celular 2, pressione "ATENDIDO" e verifique a confirmação e avanço da fila.
-8. [x] Encerre a sessão de teste no painel e inicie a sessão oficial da coleta!
+Acesse `http://localhost:3000/historico.html`:
+- **Reprodução Fiel com Animação**: assista à reprodução temporal em 1x a 60x com as mesmas funções puras do tempo real (`derivarEstado`).
+- **Gráficos Integrados**: área empilhada da ocupação por zona ao longo do tempo, curvas acumuladas por ponto e histograma de duração.
+- **Tabela Analítica por Zona**: comparativo de $L$, $\lambda$, $\mu$, tempo médio, percentis e Lei de Little ($L = \lambda W$).
+- **CSV Pessoas**: histórico completo por aluno com entrada e saída em cada zona, tempo de sistema e dispositivo responsável.
+- **CSV Métricas e CSV Resumo de Zonas**: relatórios tabulados com separador `;` e codificação UTF-8 com BOM para Excel.
+- **Comparação entre Sessões**: evolução histórica do tempo médio por zona entre múltiplos dias de coleta.

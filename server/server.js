@@ -12,12 +12,14 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { detectarEnderecosRede, obterOuGerarPin, gerarQrCode } from './rede.js';
 import { GerenciadorSessoes } from './sessao.js';
 import { calcularMetricas, formatarNumero, formatarDuracao, formatarHoraLocal } from '../shared/metricas.js';
+import { obterZonasPadrao, gerarPontosDeZonas } from '../shared/estado.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DIR_RAIZ = path.resolve(__dirname, '..');
 const DIR_PUBLIC = path.resolve(DIR_RAIZ, 'public');
 const DIR_SHARED = path.resolve(DIR_RAIZ, 'shared');
+const DIR_DADOS = path.resolve(DIR_RAIZ, 'dados');
 
 const PORTA = process.env.PORT || 3000;
 const PIN_ACESSO = obterOuGerarPin();
@@ -61,6 +63,8 @@ const servidorHttp = http.createServer((req, res) => {
     caminhoArquivoRelativo = '/painel.html';
   } else if (pathname === '/historico') {
     caminhoArquivoRelativo = '/historico.html';
+  } else if (pathname === '/pontos') {
+    caminhoArquivoRelativo = '/pontos.html';
   }
 
   // 3. Servir arquivos estáticos de public/ ou shared/
@@ -100,9 +104,9 @@ const servidorHttp = http.createServer((req, res) => {
 });
 
 /**
- * Trata requisições da API REST (Download de relatórios, CSV, listagem de sessões).
+ * Trata requisições da API REST (Download de relatórios, CSV, listagem de sessões, presets e QR codes).
  */
-function tratarRequisicaoApi(req, res, pathname, urlParsed) {
+async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
   // CORS para a rede local
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -114,11 +118,12 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
     return;
   }
 
-  // GET /api/info - Retorna dados de rede e PIN para o painel
+  // GET /api/info - Retorna dados de rede, PIN e resumo da sessão
   if (pathname === '/api/info' && req.method === 'GET') {
     const rede = detectarEnderecosRede();
     const urlCelular = `http://${rede.ipPreferido}:${PORTA}/celular.html`;
-    gerarQrCode(urlCelular).then(({ qrDataUrl }) => {
+    try {
+      const { qrDataUrl } = await gerarQrCode(urlCelular);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         ipPreferido: rede.ipPreferido,
@@ -129,10 +134,79 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
         qrDataUrl,
         sessaoAtiva: gerenciadorSessoes.obterResumoSessaoAtiva()
       }));
-    }).catch(err => {
+    } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ erro: err.message }));
-    });
+    }
+    return;
+  }
+
+  // GET /api/presets & POST /api/presets
+  if (pathname === '/api/presets') {
+    if (req.method === 'GET') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(gerenciadorSessoes.obterPresets()));
+      return;
+    }
+    if (req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const preset = JSON.parse(body);
+          if (!preset.nome || !Array.isArray(preset.zonas)) {
+            throw new Error('Preset inválido: nome e lista de zonas são obrigatórios.');
+          }
+          if (!preset.id) preset.id = `custom_${Date.now()}`;
+          const presets = gerenciadorSessoes.salvarPreset(preset);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: true, presets }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: false, erro: err.message }));
+        }
+      });
+      return;
+    }
+  }
+
+  // GET /api/pontos-qr - Retorna QR codes por ponto de verificação para impressão
+  if (pathname === '/api/pontos-qr' && req.method === 'GET') {
+    const rede = detectarEnderecosRede();
+    const sessaoAtiva = gerenciadorSessoes.sessaoAtiva;
+    let pontos = [];
+
+    if (sessaoAtiva) {
+      pontos = sessaoAtiva.config.pontos;
+    } else {
+      const zonasPadrao = obterZonasPadrao();
+      pontos = gerarPontosDeZonas(zonasPadrao);
+    }
+
+    try {
+      const listaPontosQr = await Promise.all(pontos.map(async (p) => {
+        const urlPonto = `http://${rede.ipPreferido}:${PORTA}/celular.html?ponto=${encodeURIComponent(p.id)}`;
+        const { qrDataUrl } = await gerarQrCode(urlPonto);
+        return {
+          id: p.id,
+          nome: p.nome,
+          de: p.de,
+          para: p.para,
+          modoOrigem: p.modoOrigem,
+          url: urlPonto,
+          qrDataUrl
+        };
+      }));
+
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        pin: PIN_ACESSO,
+        pontos: listaPontosQr
+      }));
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ erro: err.message }));
+    }
     return;
   }
 
@@ -215,15 +289,30 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
     // GET /api/sessoes/:id/csv-pessoas
     if (subAcao === 'csv-pessoas' && req.method === 'GET') {
       const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs);
-      let csv = '\uFEFFPessoa;Horario_Chegada;Horario_Atendimento;Tempo_Espera_Seg;Intervalo_Atendimento_Seg;Status;Disp_Chegada;Disp_Atendimento\r\n';
+      const zonasHabilitadas = metricas.config.zonas.filter(z => z.habilitada !== false);
 
+      let header = '\uFEFFPessoa;Situacao';
+      for (const z of zonasHabilitadas) {
+        header += `;Entrada_${z.nome.replace(/\s+/g, '_')};Saida_${z.nome.replace(/\s+/g, '_')};Tempo_${z.nome.replace(/\s+/g, '_')}_Seg`;
+      }
+      header += ';Tempo_Total_Sistema_Seg;Chegada;Saida_Final\r\n';
+
+      let csv = header;
       for (const p of metricas.pessoas) {
-        const chegadaStr = p.chegadaMs ? formatarHoraLocal(p.chegadaMs) : '';
-        const atendStr = p.atendimentoMs ? formatarHoraLocal(p.atendimentoMs) : '';
-        const esperaSeg = p.esperaMs !== null ? formatarNumero(p.esperaMs / 1000, 2) : '';
-        const intSeg = p.intervaloAtendimentoMs !== null ? formatarNumero(p.intervaloAtendimentoMs / 1000, 2) : '';
-
-        csv += `${p.pessoa};${chegadaStr};${atendStr};${esperaSeg};${intSeg};${p.status};${p.dispositivoChegada || ''};${p.dispositivoAtendimento || ''}\r\n`;
+        let linha = `${p.pessoa};${p.situacao}`;
+        for (const z of zonasHabilitadas) {
+          const entr = p.zonaEntradaMs?.[z.id] ? formatarHoraLocal(p.zonaEntradaMs[z.id]) : '';
+          const sai = p.zonaSaidaMs?.[z.id] ? formatarHoraLocal(p.zonaSaidaMs[z.id]) : '';
+          const tempo = (p.tempoZonaMs?.[z.id] !== undefined && p.tempoZonaMs?.[z.id] !== null)
+            ? formatarNumero(p.tempoZonaMs[z.id] / 1000, 2)
+            : '';
+          linha += `;${entr};${sai};${tempo}`;
+        }
+        const tempoTotal = p.tempoTotalMs !== null ? formatarNumero(p.tempoTotalMs / 1000, 2) : '';
+        const chegStr = p.chegadaMs ? formatarHoraLocal(p.chegadaMs) : '';
+        const saiStr = p.saidaMs ? formatarHoraLocal(p.saidaMs) : '';
+        linha += `;${tempoTotal};${chegStr};${saiStr}\r\n`;
+        csv += linha;
       }
 
       res.writeHead(200, {
@@ -234,11 +323,35 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       return;
     }
 
+    // GET /api/sessoes/:id/csv-resumo-zonas
+    if (subAcao === 'csv-resumo-zonas' && req.method === 'GET') {
+      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs);
+      let csv = '\uFEFFZona_ID;Nome;Modo;Entradas;Saidas;Anuladas;Ocupacao_Media_L;Pico_Maximo;Tempo_Medio_Concluidos_Seg;Tempo_Medio_Little_Seg;Divergencia_Little_Perc;Taxa_Entrada_Lambda_Min;Vazao_Saida_Min;Taxa_Servico_Mu_Min;Utilizacao_Perc;Participacao_Tempo_Total_Perc\r\n';
+
+      for (const z of Object.values(metricas.zonas)) {
+        csv += `${z.id};${z.nome};${z.modo};${z.entradas};${z.saidas};${z.anuladas};` +
+               `${formatarNumero(z.ocupacao.mediaPonderada, 4)};${z.ocupacao.max};` +
+               `${formatarNumero(z.tempoMedioConcluidosSeg, 2)};${formatarNumero(z.tempoMedioLittleSeg, 2)};` +
+               `${formatarNumero(z.divergenciaLittle.diffPerc, 2)};${formatarNumero(z.taxaEntradaLambda, 4)};` +
+               `${formatarNumero(z.vazaoSaida, 4)};${formatarNumero(z.muPorServidor, 4)};` +
+               `${formatarNumero(z.utilizacao * 100, 2)};${formatarNumero(z.participacaoTempoTotal, 2)}\r\n`;
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="resumo_zonas_${sessaoId}.csv"`
+      });
+      res.end(csv);
+      return;
+    }
+
     // GET /api/sessoes/:id/csv-eventos
     if (subAcao === 'csv-eventos' && req.method === 'GET') {
-      let csv = '\uFEFFSeq;Horario;Tipo;Pessoa;Dispositivo;Tardio;Texto\r\n';
+      let csv = '\uFEFFSeq;Horario;Horario_Efetivo;Tipo;Pessoa;Ponto;De;Para;Identidade;Dispositivo;Tardio;Inversao_Corrigida;Texto\r\n';
       for (const ev of dadosSessao.eventos) {
-        csv += `${ev.seq};${formatarHoraLocal(ev.t)};${ev.tipo};${ev.pessoa || ''};${ev.dispositivoNome || ''};${ev.tardio ? 'SIM' : 'NAO'};${ev.texto ? `"${ev.texto.replace(/"/g, '""')}"` : ''}\r\n`;
+        const hOrig = formatarHoraLocal(ev.t);
+        const hEfet = formatarHoraLocal(ev.tEfetivo ?? ev.t);
+        csv += `${ev.seq};${hOrig};${hEfet};${ev.tipo};${ev.pessoa || ''};${ev.ponto || ''};${ev.de || ''};${ev.para || ''};${ev.identidade || ''};${ev.dispositivoNome || ''};${ev.tardio ? 'SIM' : 'NAO'};${ev.inversaoCorrigida ? 'SIM' : 'NAO'};${ev.texto ? `"${ev.texto.replace(/"/g, '""')}"` : ''}\r\n`;
       }
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
@@ -256,29 +369,31 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       csv += `Local;${dadosSessao.meta.local};\r\n`;
       csv += `Duracao Observada;${formatarDuracao(m.duracaoTotalMs)};HH:MM:SS\r\n`;
       csv += `Duracao em Minutos;${formatarNumero(m.duracaoMin, 2)};min\r\n`;
-      csv += `Total de Chegadas;${m.n_chegadas};pessoas\r\n`;
-      csv += `Total de Atendidos;${m.n_atendimentos};pessoas\r\n`;
-      csv += `Total de Anulados;${m.n_anuladas};pessoas\r\n`;
-      csv += `Total de Revertidos;${m.n_revertidas};pessoas\r\n`;
-      csv += `Pessoas Restantes na Fila;${m.n_na_fila};pessoas\r\n`;
-      csv += `Taxa de Chegada (lambda);${formatarNumero(m.lambda, 4)};pessoas/min\r\n`;
-      csv += `Taxa de Servico (mu);${formatarNumero(m.muPorServidor, 4)};pessoas/min/servidor\r\n`;
-      csv += `Utilizacao do Sistema (rho);${formatarNumero(m.utilizacao * 100, 2)};%\r\n`;
-      csv += `Vazao Global;${formatarNumero(m.vazaoGlobalPorMin, 4)};pessoas/min\r\n`;
-      csv += `Vazao Operacional Efetiva;${formatarNumero(m.vazaoOperacionalPorMin, 4)};pessoas/min\r\n`;
-      csv += `Tempo de Espera Medio;${formatarNumero(m.statsEspera.media, 2)};seg\r\n`;
-      csv += `Tempo de Espera Mediano;${formatarNumero(m.statsEspera.mediana, 2)};seg\r\n`;
-      csv += `Tempo de Espera Desvio Padrao;${formatarNumero(m.statsEspera.desvioPadrao, 2)};seg\r\n`;
-      csv += `Tempo de Espera P90;${formatarNumero(m.statsEspera.p90, 2)};seg\r\n`;
-      csv += `Tempo de Espera P95;${formatarNumero(m.statsEspera.p95, 2)};seg\r\n`;
-      csv += `Intervalo Atendimentos Medio;${formatarNumero(m.statsIntervalosAtend.media, 2)};seg\r\n`;
-      csv += `Intervalo Atendimentos CV;${formatarNumero(m.statsIntervalosAtend.cv, 4)};\r\n`;
-      csv += `Comprimento Fila Medio Ponderado (L);${formatarNumero(m.filaTempo.mediaPonderada, 4)};pessoas\r\n`;
-      csv += `Pico Maximo da Fila;${m.filaTempo.max};pessoas\r\n`;
-      csv += `Lei de Little Produto lambda*W;${formatarNumero(m.little.L_calculado_lambda_W, 4)};pessoas\r\n`;
-      csv += `Lei de Little Diferenca Percentual;${formatarNumero(m.little.diffPerc, 2)};%\r\n`;
-      csv += `Tempo Total Ocioso;${formatarDuracao(m.ociosidade.tempoOciosoTotalMs)};HH:MM:SS\r\n`;
-      csv += `Percentual Ocioso;${formatarNumero(m.ociosidade.percentualOcioso, 2)};%\r\n`;
+      csv += `Total de Chegadas;${m.balanco.chegadas};pessoas\r\n`;
+      csv += `Total de Concluidos (Saidas);${m.balanco.saidas};pessoas\r\n`;
+      csv += `Total de Anulados;${m.balanco.anuladas};pessoas\r\n`;
+      csv += `Presentes no Sistema;${m.balanco.presentes};pessoas\r\n`;
+      csv += `Balanco de Consistencia;${m.balanco.consistente ? 'OK' : 'DISCREPANCIA'};\r\n`;
+      csv += `Tempo Medio no Sistema;${formatarNumero(m.global.tempoMedioSistemaSeg, 2)};seg\r\n`;
+      csv += `Taxa Global Chegadas (lambda);${formatarNumero(m.global.lambdaGlobal, 4)};pessoas/min\r\n`;
+      csv += `Ocupacao Media Global (L);${formatarNumero(m.global.L_medioGlobal, 4)};pessoas\r\n`;
+      csv += `Lei de Little Global (lambda*W);${formatarNumero(m.global.littleGlobal.L_calculado_lambda_W, 4)};pessoas\r\n`;
+      csv += `Lei de Little Global Diferenca;${formatarNumero(m.global.littleGlobal.diffPerc, 2)};%\r\n`;
+
+      for (const z of Object.values(m.zonas)) {
+        csv += `\r\n--- Zona: ${z.nome} (${z.id}) ---\r\n`;
+        csv += `Modo;${z.modo};\r\n`;
+        csv += `Entradas;${z.entradas};pessoas\r\n`;
+        csv += `Saidas;${z.saidas};pessoas\r\n`;
+        csv += `Ocupacao Media (L);${formatarNumero(z.ocupacao.mediaPonderada, 4)};pessoas\r\n`;
+        csv += `Ocupacao Pico;${z.ocupacao.max};pessoas\r\n`;
+        csv += `Tempo Medio Concluintes;${formatarNumero(z.tempoMedioConcluidosSeg, 2)};seg\r\n`;
+        csv += `Tempo Medio Little;${formatarNumero(z.tempoMedioLittleSeg, 2)};seg\r\n`;
+        csv += `Divergencia Little;${formatarNumero(z.divergenciaLittle.diffPerc, 2)};%\r\n`;
+        csv += `Taxa Entrada (lambda);${formatarNumero(z.taxaEntradaLambda, 4)};pessoas/min\r\n`;
+        csv += `Vazao Saida;${formatarNumero(z.vazaoSaida, 4)};pessoas/min\r\n`;
+        csv += `Participacao no Tempo Total;${formatarNumero(z.participacaoTempoTotal, 2)};%\r\n`;
+      }
 
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
@@ -342,14 +457,15 @@ wss.on('connection', (ws, req) => {
   const infoDispositivo = {
     id: `disp_${Math.random().toString(36).substring(2, 9)}`,
     nome: 'Aparelho',
-    papel: 'ambos',
+    papel: 'avaliador',
     autenticado: false,
     conectado: true,
     ip: ipCliente,
     latenciaMs: 0,
     offsetRelogioMs: 0,
     ultimoEventoMs: Date.now(),
-    qtdEventos: 0
+    qtdEventos: 0,
+    pontoDesejado: null
   };
 
   conexoesAtivas.set(ws, infoDispositivo);
@@ -396,7 +512,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     if (String(msg.pin).trim() !== PIN_ACESSO) {
       tentativa.contagem++;
       if (tentativa.contagem >= 5) {
-        tentativa.bloqueadoAte = agora + 30000; // Bloqueio temporário de 30s
+        tentativa.bloqueadoAte = agora + 30000;
         tentativa.contagem = 0;
       }
       tentativasPinPorIp.set(dispositivo.ip, tentativa);
@@ -415,8 +531,31 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     if (msg.dispositivoId) dispositivo.id = msg.dispositivoId;
     if (msg.dispositivoNome) dispositivo.nome = msg.dispositivoNome;
     if (msg.papel) dispositivo.papel = msg.papel;
+    if (msg.pontoDesejado) dispositivo.pontoDesejado = msg.pontoDesejado;
 
     const sessaoAtiva = gerenciadorSessoes.sessaoAtiva;
+
+    // Autoatribuição se leu QR de ponto específico
+    if (sessaoAtiva && msg.pontoDesejado) {
+      const pontoExiste = sessaoAtiva.config.pontos.some(p => p.id === msg.pontoDesejado);
+      if (pontoExiste) {
+        const novasAtrib = { ...sessaoAtiva.atribuicoes, [dispositivo.id]: [msg.pontoDesejado] };
+        gerenciadorSessoes.atualizarAtribuicoes(novasAtrib, { id: dispositivo.id, nome: dispositivo.nome });
+      }
+    } else if (sessaoAtiva && sessaoAtiva.config.autoAtribuirLivres && dispositivo.papel === 'avaliador') {
+      // Autoatribuição de pontos livres a novos aparelhos
+      const atribuicoesAtuais = sessaoAtiva.atribuicoes;
+      if (!atribuicoesAtuais[dispositivo.id] || atribuicoesAtuais[dispositivo.id].length === 0) {
+        const todosPontos = sessaoAtiva.config.pontos.map(p => p.id);
+        const pontosOcupados = new Set(Object.values(atribuicoesAtuais).flat());
+        const pontoLivre = todosPontos.find(pId => !pontosOcupados.has(pId));
+        if (pontoLivre) {
+          const novasAtrib = { ...atribuicoesAtuais, [dispositivo.id]: [pontoLivre] };
+          gerenciadorSessoes.atualizarAtribuicoes(novasAtrib, { id: dispositivo.id, nome: dispositivo.nome });
+        }
+      }
+    }
+
     const estado = sessaoAtiva ? sessaoAtiva.estadoAtual : null;
     const eventos = sessaoAtiva ? sessaoAtiva.eventos : [];
 
@@ -433,7 +572,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // As mensagens subsequentes exigem autenticação
+  // Mensagens subsequentes exigem autenticação
   if (!dispositivo.autenticado) {
     ws.send(JSON.stringify({
       tipo: 'erro',
@@ -469,34 +608,63 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 4. Comandos de Coleta da Fila (chegada, atendido, anulacao, reversao, anotacao)
+  // 4. Comandos de Coleta da Fila (chegada, avanço, anulação, reversão, anotação)
   if (msg.tipo === 'comando') {
     const autor = {
       id: dispositivo.id,
-      nome: dispositivo.nome
+      nome: dispositivo.nome,
+      papel: dispositivo.papel
     };
 
-    const res = gerenciadorSessoes.processarComando(msg, autor, dispositivo.offsetRelogioMs);
+    // Callback para difundir evento quando uma inversão for resolvida
+    const onInversaoResolvida = (eventoJusante, estadoNovo) => {
+      transmitirParaTodos({
+        tipo: 'novo_evento',
+        evento: eventoJusante,
+        estado: estadoNovo,
+        diff: [{
+          op: 'mover',
+          pessoa: eventoJusante.pessoa,
+          de: eventoJusante.de,
+          para: eventoJusante.para,
+          ponto: eventoJusante.ponto,
+          identidade: eventoJusante.identidade
+        }]
+      });
+    };
+
+    const res = gerenciadorSessoes.processarComando(msg, autor, dispositivo.offsetRelogioMs, onInversaoResolvida);
 
     if (res.sucesso) {
       dispositivo.qtdEventos++;
       dispositivo.ultimoEventoMs = Date.now();
 
-      // Confirmação ao remetente
-      ws.send(JSON.stringify({
-        tipo: 'comando_resposta',
-        sucesso: true,
-        clientEventId: res.clientEventId,
-        evento: res.evento
-      }));
+      if (res.pendenteInversao) {
+        // Evento entrou em espera por inversão temporária
+        ws.send(JSON.stringify({
+          tipo: 'comando_resposta',
+          sucesso: true,
+          pendenteInversao: true,
+          clientEventId: res.clientEventId,
+          mensagem: res.mensagem
+        }));
+      } else {
+        // Confirmação ao remetente
+        ws.send(JSON.stringify({
+          tipo: 'comando_resposta',
+          sucesso: true,
+          clientEventId: res.clientEventId,
+          evento: res.evento
+        }));
 
-      // Difusão do evento para todos os aparelhos conectados
-      transmitirParaTodos({
-        tipo: 'novo_evento',
-        evento: res.evento,
-        estado: res.estado,
-        diff: res.diff
-      });
+        // Difusão do evento para todos os aparelhos conectados
+        transmitirParaTodos({
+          tipo: 'novo_evento',
+          evento: res.evento,
+          estado: res.estado,
+          diff: res.diff
+        });
+      }
 
       transmitirListaAparelhos();
     } else {
@@ -557,7 +725,40 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 7. Simular Coleta de Teste
+  // 7. Atualizar Atribuições de Aparelhos aos Pontos (pelo Painel)
+  if (msg.tipo === 'atribuir_pontos') {
+    try {
+      const res = gerenciadorSessoes.atualizarAtribuicoes(msg.atribuicoes, { id: dispositivo.id, nome: dispositivo.nome });
+      transmitirParaTodos({
+        tipo: 'atribuicoes_atualizadas',
+        atribuicoes: res.atribuicoes,
+        evento: res.evento,
+        sessao: gerenciadorSessoes.obterResumoSessaoAtiva()
+      });
+      transmitirListaAparelhos();
+    } catch (err) {
+      ws.send(JSON.stringify({ tipo: 'erro', mensagem: err.message }));
+    }
+    return;
+  }
+
+  // 8. Atualizar Configurações Permitidas da Sessão Ativa (Nomes, cores, capacidades)
+  if (msg.tipo === 'atualizar_config_sessao') {
+    try {
+      const meta = gerenciadorSessoes.atualizarConfiguracaoSessao(msg.alteracoes);
+      transmitirParaTodos({
+        tipo: 'config_atualizada',
+        meta,
+        sessao: gerenciadorSessoes.obterResumoSessaoAtiva(),
+        estado: gerenciadorSessoes.sessaoAtiva.estadoAtual
+      });
+    } catch (err) {
+      ws.send(JSON.stringify({ tipo: 'erro', mensagem: err.message }));
+    }
+    return;
+  }
+
+  // 9. Simular Coleta de Teste
   if (msg.tipo === 'simular_teste') {
     executarSimulacaoTeste(ws, msg.qtdEventos || 80);
     return;
@@ -577,7 +778,7 @@ function transmitirParaTodos(objetoMsg) {
 }
 
 /**
- * Transmite especificamente para painéis de notebook.
+ * Transmite especificamente para o painel.
  */
 function transmitirParaPainel(objetoMsg) {
   const dados = JSON.stringify(objetoMsg);
@@ -589,9 +790,12 @@ function transmitirParaPainel(objetoMsg) {
 }
 
 /**
- * Envia a lista atualizada de dispositivos conectados para o painel.
+ * Envia a lista atualizada de dispositivos conectados para o painel e clientes.
  */
 function transmitirListaAparelhos() {
+  const sessaoAtiva = gerenciadorSessoes.sessaoAtiva;
+  const atribuicoes = sessaoAtiva ? sessaoAtiva.atribuicoes : {};
+
   const lista = [];
   for (const disp of conexoesAtivas.values()) {
     if (disp.autenticado) {
@@ -602,31 +806,73 @@ function transmitirListaAparelhos() {
         conectado: disp.conectado,
         latenciaMs: disp.latenciaMs,
         ultimoEventoMs: disp.ultimoEventoMs,
-        qtdEventos: disp.qtdEventos
+        qtdEventos: disp.qtdEventos,
+        pontosAtribuidos: atribuicoes[disp.id] || []
       });
     }
   }
 
   transmitirParaPainel({
     tipo: 'lista_aparelhos',
-    aparelhos: lista
+    aparelhos: lista,
+    atribuicoes
   });
 }
 
 /**
- * Gera eventos sintéticos de teste para ensaio de carga e animação.
+ * Monitor periódico a cada 1 segundo para descarte de inversões expiradas.
+ */
+setInterval(() => {
+  if (gerenciadorSessoes.sessaoAtiva) {
+    const agora = Date.now();
+    gerenciadorSessoes.descartarPendentesExpirados(agora, (pendente) => {
+      // Notifica o aparelho remetente
+      for (const [ws, disp] of conexoesAtivas.entries()) {
+        if (disp.id === pendente.autor.id && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({
+            tipo: 'comando_resposta',
+            sucesso: false,
+            codigo: 'EXPIRADO',
+            mensagem: `Evento no ponto "${pendente.pontoAlvo?.nome || pendente.pontoAlvo?.id}" expirou sem confirmação a montante.`,
+            clientEventId: pendente.clientEventId
+          }));
+        }
+      }
+
+      // Notifica o painel sobre a rejeição
+      transmitirParaPainel({
+        tipo: 'comando_rejeitado',
+        rejeicao: {
+          t: agora,
+          codigo: 'EXPIRADO',
+          mensagem: 'Evento de avanço expirou sem registro a montante.',
+          dispositivoId: pendente.autor.id,
+          dispositivoNome: pendente.autor.nome,
+          comando: pendente.cmd
+        }
+      });
+    });
+  }
+}, 1000);
+
+/**
+ * Gera eventos sintéticos de teste para ensaio de carga e animação através de todas as zonas.
  */
 async function executarSimulacaoTeste(ws, total = 80) {
   if (!gerenciadorSessoes.sessaoAtiva) {
+    const zonasPadrao = obterZonasPadrao();
     gerenciadorSessoes.iniciarSessao({
-      nome: 'Coleta de Teste Sintética',
+      nome: 'Coleta de Teste Sintética (Zonas RU)',
       local: 'RU - Simulação de Laboratório',
-      observacoes: 'Sessão gerada automaticamente para teste de carga e animação.',
+      observacoes: 'Sessão gerada automaticamente para teste de carga e animação multi-zona.',
       duracaoPrevistaMin: 60,
       servidores: 1,
       blocoMin: 5,
       limiarPausaSeg: 60,
-      teste: true
+      limiarAlertaOciosoSeg: 120,
+      janelaInversaoS: 20,
+      teste: true,
+      zonas: zonasPadrao
     }, { id: 'simulador', nome: 'Simulador' });
 
     transmitirParaTodos({
@@ -636,47 +882,53 @@ async function executarSimulacaoTeste(ws, total = 80) {
     });
   }
 
-  const autor = { id: 'simulador', nome: 'Robô de Teste' };
-  let chegadasRealizadas = 0;
+  const autor = { id: 'simulador', nome: 'Robô de Teste', papel: 'supervisor' };
+  const pontos = gerenciadorSessoes.sessaoAtiva.config.pontos;
 
   for (let i = 0; i < total; i++) {
-    // Alterna entre chegadas e atendimentos
-    const deveChegar = Math.random() < 0.55 || gerenciadorSessoes.sessaoAtiva.estadoAtual.fila.length === 0;
+    const estado = gerenciadorSessoes.sessaoAtiva.estadoAtual;
+    const primeiraZona = gerenciadorSessoes.sessaoAtiva.config.zonas.filter(z => z.habilitada !== false)[0]?.id || 'z1';
+
+    // Determina ação: se fila inicial estiver vazia, gera chegada
+    let pontoEscolhido = null;
+    let acao = 'chegada';
+    let pessoaEsperada = null;
+
+    const zonasComGente = Object.values(estado.zonas).filter(z => z.fila.length > 0);
+    const deveChegar = Math.random() < 0.45 || zonasComGente.length === 0;
 
     if (deveChegar) {
-      chegadasRealizadas++;
-      const res = gerenciadorSessoes.processarComando({
-        acao: 'chegada',
-        clientEventId: `sim_cheg_${Date.now()}_${i}`
-      }, autor);
-
-      transmitirParaTodos({
-        tipo: 'novo_evento',
-        evento: res.evento,
-        estado: res.estado,
-        diff: res.diff
-      });
+      acao = 'chegada';
+      pontoEscolhido = pontos[0];
     } else {
-      const fila = gerenciadorSessoes.sessaoAtiva.estadoAtual.fila;
-      if (fila.length > 0) {
-        const res = gerenciadorSessoes.processarComando({
-          acao: 'atendido',
-          pessoaEsperada: fila[0],
-          clientEventId: `sim_atend_${Date.now()}_${i}`
-        }, autor);
-
-        if (res.sucesso) {
-          transmitirParaTodos({
-            tipo: 'novo_evento',
-            evento: res.evento,
-            estado: res.estado,
-            diff: res.diff
-          });
-        }
+      acao = 'avanco';
+      // Escolhe uma zona que tem gente para avançar
+      const zonaSorteada = zonasComGente[Math.floor(Math.random() * zonasComGente.length)];
+      pontoEscolhido = pontos.find(p => p.de === zonaSorteada.id);
+      if (zonaSorteada.modo === 'fifo') {
+        pessoaEsperada = zonaSorteada.fila[0];
       }
     }
 
-    // Pequeno intervalo entre ações simuladas
+    if (pontoEscolhido) {
+      const cmd = {
+        acao,
+        ponto: pontoEscolhido.id,
+        pessoaEsperada,
+        clientEventId: `sim_${Date.now()}_${i}`
+      };
+
+      const res = gerenciadorSessoes.processarComando(cmd, autor);
+      if (res.sucesso && res.evento) {
+        transmitirParaTodos({
+          tipo: 'novo_evento',
+          evento: res.evento,
+          estado: res.estado,
+          diff: res.diff
+        });
+      }
+    }
+
     await new Promise(r => setTimeout(r, 120));
   }
 }
@@ -689,6 +941,7 @@ servidorHttp.listen(PORTA, '0.0.0.0', async () => {
   const urlCelular = `http://${rede.ipPreferido}:${PORTA}/celular.html`;
   const urlPainel = `http://localhost:${PORTA}/painel.html`;
   const urlHistorico = `http://localhost:${PORTA}/historico.html`;
+  const urlPontos = `http://localhost:${PORTA}/pontos.html`;
 
   const { qrTerminal } = await gerarQrCode(urlCelular);
 
@@ -703,6 +956,8 @@ servidorHttp.listen(PORTA, '0.0.0.0', async () => {
   console.log(`    URL: ${urlPainel}`);
   console.log('  Histórico e Relatórios:');
   console.log(`    URL: ${urlHistorico}`);
+  console.log('  Impressão dos Pontos (QR Codes):');
+  console.log(`    URL: ${urlPontos}`);
   console.log('\n----------------- QR CODE PARA OS CELULARES --------------------');
   console.log(qrTerminal);
   console.log('----------------------------------------------------------------');
