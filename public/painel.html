@@ -7,7 +7,6 @@
   <title>Painel do Notebook - Fila RU</title>
   <link rel="stylesheet" href="estilo.css">
   <style>
-    /* Estilos do Painel de Projeção / Widescreen */
     .dashboard-grid {
       display: grid;
       grid-template-columns: 1fr;
@@ -15,7 +14,7 @@
     }
     @media (min-width: 1024px) {
       .dashboard-grid {
-        grid-template-columns: 2.5fr 1fr;
+        grid-template-columns: 2.3fr 1fr;
       }
     }
     .kpi-row {
@@ -46,6 +45,44 @@
       font-weight: 800;
       animation: pulse-danger 1.5s infinite;
       margin-bottom: 8px;
+    }
+    .fila-monitor-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      position: relative;
+    }
+    .fila-monitor-card.f1 { border-top: 4px solid #dc2626; }
+    .fila-monitor-card.f2 { border-top: 4px solid #16a34a; }
+    .fila-monitor-card.f3 { border-top: 4px solid #ec4899; }
+    .fila-monitor-card.desativada { opacity: 0.6; filter: grayscale(0.5); }
+    .coverage-warning {
+      background: rgba(220, 38, 38, 0.15);
+      border: 1px solid var(--danger);
+      color: var(--danger);
+      padding: 4px 8px;
+      border-radius: 4px;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .tab-qr-btn {
+      padding: 4px 10px;
+      font-size: 0.8rem;
+      border: 1px solid var(--border-color);
+      background: var(--bg-subtle);
+      border-radius: 6px;
+      cursor: pointer;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .tab-qr-btn.active {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
     }
   </style>
 </head>
@@ -80,16 +117,16 @@
       ⚠️ ATENÇÃO: Nenhum atendimento confirmado há mais de <span id="lbl-segundos-ocioso">120</span> segundos com pessoas aguardando na fila!
     </div>
 
-    <!-- Linha de KPIs ao Vivo -->
+    <!-- Linha de KPIs Globais ao Vivo -->
     <div class="kpi-row">
       <div class="hud-stat highlight-queue">
-        <span class="label">Pessoas na Fila</span>
+        <span class="label">Pessoas na Fila 1</span>
         <span class="value" id="kpi-fila">0</span>
         <span style="font-size:0.75rem; color:var(--text-muted)">Pico: <span id="kpi-fila-max">0</span></span>
       </div>
 
       <div class="hud-stat">
-        <span class="label">Atendidos / Chegadas</span>
+        <span class="label">Catraca / Chegadas</span>
         <span class="value">
           <span id="kpi-atendidos" style="color:var(--btn-atendimento-bg)">0</span> /
           <span id="kpi-chegadas" style="color:var(--btn-chegada-bg)">0</span>
@@ -106,7 +143,18 @@
       <div class="hud-stat" id="hud-timer-box">
         <span class="label">Tempo Decorrido</span>
         <span class="value" id="kpi-tempo">00:00:00</span>
-        <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-restante">Faltam 60:00</span>
+        <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-restante">Aguardando início</span>
+      </div>
+    </div>
+
+    <!-- Painel de Acompanhamento das Filas Ativas -->
+    <div class="card" id="card-filas-monitor" style="margin-bottom:12px;">
+      <div class="card-title">
+        <span>Acompanhamento por Fila</span>
+        <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)" id="lbl-status-encadeamento"></span>
+      </div>
+      <div id="grid-filas-monitor" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(260px, 1fr)); gap:12px;">
+        <span style="color:var(--text-muted); font-size:0.85rem;">Inicie uma sessão para visualizar as filas monitoradas.</span>
       </div>
     </div>
 
@@ -117,10 +165,10 @@
       <div style="display:flex; flex-direction:column; gap:12px;">
         <div class="animacao-wrapper">
           <div class="card-title">
-            <span>Visualização da Fila em Tempo Real</span>
-            <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Sincronizada em todos os aparelhos</span>
+            <span>Visualização do Percurso em Tempo Real</span>
+            <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Conforme esboço de referência</span>
           </div>
-          <div class="animacao-container grande" id="container-animacao-painel" style="height:220px;"></div>
+          <div class="animacao-container grande" id="container-animacao-painel" style="height:440px;"></div>
         </div>
 
         <!-- Log dos Últimos Eventos Registrados -->
@@ -135,13 +183,14 @@
                 <tr>
                   <th>#</th>
                   <th>Horário</th>
+                  <th>Fila</th>
                   <th>Tipo</th>
                   <th>Pessoa / Info</th>
                   <th>Autor (Aparelho)</th>
                 </tr>
               </thead>
               <tbody id="tabela-ultimos-eventos">
-                <tr><td colspan="5" style="text-align:center; padding:15px; color:var(--text-muted)">Nenhum evento registrado.</td></tr>
+                <tr><td colspan="6" style="text-align:center; padding:15px; color:var(--text-muted)">Nenhum evento registrado.</td></tr>
               </tbody>
             </table>
           </div>
@@ -171,28 +220,37 @@
       <!-- Coluna Lateral: Conexão, QR Code, Aparelhos e Controle de Sessão -->
       <div style="display:flex; flex-direction:column; gap:12px;">
 
-        <!-- Card de Conexão e PIN -->
+        <!-- Card de Conexão e QR Codes por Área -->
         <div class="card" style="text-align:center;">
           <div class="card-title" style="justify-content:center;">
             <span>Acesso dos Celulares</span>
           </div>
+
+          <!-- Abas para QR Code Geral e por Fila -->
+          <div style="display:flex; justify-content:center; gap:4px; margin-bottom:8px; flex-wrap:wrap;">
+            <button class="tab-qr-btn active" id="btn-qr-geral" onclick="PainelApp.selecionarQrTab('geral')">Geral</button>
+            <button class="tab-qr-btn" id="btn-qr-1" onclick="PainelApp.selecionarQrTab('1')">Fila 1</button>
+            <button class="tab-qr-btn" id="btn-qr-2" onclick="PainelApp.selecionarQrTab('2')">Fila 2</button>
+            <button class="tab-qr-btn" id="btn-qr-3" onclick="PainelApp.selecionarQrTab('3')">Fila 3</button>
+          </div>
+
           <div style="margin: 6px 0;">
-            <img id="img-qrcode" alt="QR Code" style="width:180px; height:180px; border-radius:8px; border:1px solid var(--border-color); display:inline-block;">
+            <img id="img-qrcode" alt="QR Code" style="width:170px; height:170px; border-radius:8px; border:1px solid var(--border-color); display:inline-block;">
           </div>
           <div style="font-size:0.88rem; font-weight:700; color:var(--text-muted);">
-            PIN DE ACESSO: <span style="font-size:1.6rem; color:var(--primary); font-weight:900;" id="txt-pin-display">----</span>
+            PIN DE ACESSO: <span style="font-size:1.6rem; color:var(--primary); font-weight:900;" id="txt-pin-display">1234</span>
           </div>
-          <div style="font-size:0.8rem; color:var(--text-muted); margin-top:4px;" id="txt-url-display">
+          <div style="font-size:0.75rem; color:var(--text-muted); margin-top:4px;" id="txt-url-display">
             http://192.168.137.1:3000
           </div>
         </div>
 
-        <!-- Aparelhos Conectados -->
+        <!-- Aparelhos Conectados e Delegação de Área -->
         <div class="card">
           <div class="card-title">
             <span>Aparelhos Conectados (<span id="lbl-qtd-aparelhos">0</span>)</span>
           </div>
-          <div id="lista-aparelhos-painel" style="display:flex; flex-direction:column; gap:6px; max-height:180px; overflow-y:auto; font-size:0.85rem;">
+          <div id="lista-aparelhos-painel" style="display:flex; flex-direction:column; gap:6px; max-height:220px; overflow-y:auto; font-size:0.85rem;">
             <span style="color:var(--text-muted)">Nenhum celular conectado.</span>
           </div>
         </div>
@@ -229,12 +287,10 @@
   </main>
 
   <!-- ====================================================================
-       MODAIS DO PAINEL
+       MODAL: INICIAR NOVA SESSÃO
        ==================================================================== -->
-
-  <!-- Modal: Iniciar Nova Sessão -->
   <div class="modal-backdrop" id="modal-iniciar-sessao">
-    <div class="modal-dialog">
+    <div class="modal-dialog" style="max-width:580px;">
       <div class="modal-title">
         <span>Configurar e Iniciar Observação</span>
         <button class="btn btn-secondary" onclick="PainelApp.fecharModais()">✕</button>
@@ -242,22 +298,70 @@
 
       <form onsubmit="event.preventDefault(); PainelApp.iniciarSessaoForm();">
         <div class="form-grid">
-          <div class="form-group">
+          <div class="form-group full-span">
             <label for="cfg-nome">Nome da Observação *</label>
             <input type="text" id="cfg-nome" required value="Almoço RU - Quinta">
           </div>
           <div class="form-group">
             <label for="cfg-local">Local / Campus *</label>
-            <input type="text" id="cfg-local" required value="RU Campus Santarém">
+            <input type="text" id="cfg-local" required value="RU Central">
           </div>
           <div class="form-group">
             <label for="cfg-duracao">Duração Prevista (minutos)</label>
             <input type="number" id="cfg-duracao" min="1" value="60">
           </div>
-          <div class="form-group">
-            <label for="cfg-servidores">Servidores / Catracas (c)</label>
-            <input type="number" id="cfg-servidores" min="1" value="1">
+
+          <!-- SELEÇÃO DE FILAS E ATALHOS -->
+          <div class="form-group full-span" style="background:var(--bg-subtle); padding:10px; border-radius:8px;">
+            <label style="font-weight:700; margin-bottom:4px;">Filas a Coletar nesta Sessão (mínimo 1):</label>
+            <div style="display:flex; gap:8px; margin-bottom:8px;">
+              <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1])">Somente Fila 1</button>
+              <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1, 2])">Filas 1 e 2</button>
+              <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1, 2, 3])">Todas (1, 2 e 3)</button>
+            </div>
+
+            <div style="display:flex; flex-direction:column; gap:6px;">
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="chk-fila-1" checked style="width:auto;">
+                <span style="font-weight:700; color:#dc2626;">Fila 1 (Vermelho):</span> Entrada → Catraca
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="chk-fila-2" checked style="width:auto;">
+                <span style="font-weight:700; color:#16a34a;">Fila 2 (Verde):</span> Catraca → Balcão Atendimento → Mesas
+              </label>
+              <label style="display:flex; align-items:center; gap:8px; cursor:pointer;">
+                <input type="checkbox" id="chk-fila-3" checked style="width:auto;">
+                <span style="font-weight:700; color:#ec4899;">Fila 3 (Rosa):</span> Mesas → Saída
+              </label>
+            </div>
           </div>
+
+          <!-- RÓTULOS PERSONALIZADOS E SERVIDORES -->
+          <div class="form-group full-span" style="background:var(--bg-subtle); padding:10px; border-radius:8px;">
+            <label style="font-weight:700; margin-bottom:4px;">Rótulos dos Botões e Servidores (c) por Fila:</label>
+
+            <!-- Fila 1 -->
+            <div style="display:grid; grid-template-columns:1fr 1fr 80px; gap:6px; align-items:center; margin-bottom:6px;">
+              <input type="text" id="rot-f1-cheg" value="CHEGADA" title="Entrada Fila 1" placeholder="Entrada Fila 1">
+              <input type="text" id="rot-f1-saida" value="PASSOU NA CATRACA" title="Saída Fila 1" placeholder="Saída Fila 1">
+              <input type="number" id="srv-f1" value="1" min="1" title="Servidores F1" placeholder="Serv. F1">
+            </div>
+
+            <!-- Fila 2 -->
+            <div style="display:grid; grid-template-columns:1fr 1fr 80px; gap:6px; align-items:center; margin-bottom:6px;">
+              <input type="text" id="rot-f2-cheg" value="PASSOU NA CATRACA" title="Entrada Fila 2" placeholder="Entrada Fila 2 (se F1 inativa)">
+              <input type="text" id="rot-f2-saida" value="CHEGOU ÀS MESAS" title="Saída Fila 2" placeholder="Saída Fila 2">
+              <input type="number" id="srv-f2" value="1" min="1" title="Servidores F2" placeholder="Serv. F2">
+            </div>
+
+            <!-- Fila 3 -->
+            <div style="display:grid; grid-template-columns:1fr 1fr 80px; gap:6px; align-items:center;">
+              <input type="text" id="rot-f3-cheg" value="SAIU DAS MESAS" title="Entrada Fila 3" placeholder="Entrada Fila 3">
+              <input type="text" id="rot-f3-saida" value="PASSOU NA SAÍDA" title="Saída Fila 3" placeholder="Saída Fila 3">
+              <input type="number" id="srv-f3" value="1" min="1" title="Servidores F3" placeholder="Serv. F3">
+            </div>
+          </div>
+
           <div class="form-group">
             <label for="cfg-bloco">Bloco de Agregação (minutos)</label>
             <input type="number" id="cfg-bloco" min="1" value="5">
@@ -268,7 +372,7 @@
           </div>
           <div class="form-group full-span">
             <label for="cfg-obs">Observações (clima, cardápio, dia)</label>
-            <textarea id="cfg-obs" rows="2" placeholder="Ex: Dia nublado, atraso na catraca 1."></textarea>
+            <textarea id="cfg-obs" rows="2" placeholder="Ex: Dia chuvoso, cardápio especial."></textarea>
           </div>
           <div class="form-group full-span" style="flex-direction:row; align-items:center; gap:8px;">
             <input type="checkbox" id="cfg-teste" style="width:auto;">
@@ -287,4 +391,3 @@
   <script type="module" src="painel.js"></script>
 </body>
 </html>
-

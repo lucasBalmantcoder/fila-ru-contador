@@ -1,35 +1,78 @@
 /**
  * shared/estado.js
- * Funções puras para derivação e comparação de estado da fila.
+ * Funções puras para derivação e comparação de estado das filas do RU.
+ * Suporta até três filas simultâneas (Fila 1: Entrada->Catraca, Fila 2: Catraca->Mesas, Fila 3: Mesas->Saída).
  * Compatível tanto com Node.js (ES module) quanto com navegadores (ES module).
  */
 
 /**
- * Deriva o estado completo da fila a partir do log de eventos até o instante t.
+ * Deriva o estado completo de todas as filas ativas a partir do log de eventos até o instante t.
  * @param {Array<Object>} eventos - Lista ordenada de eventos da sessão.
  * @param {number} [t=Infinity] - Instante limite (epoch ms). Padrão: Infinity.
- * @returns {Object} Estado derivado da fila.
+ * @param {Object} [configParam={}] - Configuração da sessão (opcional).
+ * @returns {Object} Estado derivado das filas.
  */
-export function derivarEstado(eventos = [], t = Infinity) {
-  const pessoas = new Map();
-  const fila = []; // Array ordenado de IDs de pessoas que aguardam atendimento
-  let totalChegadas = 0;
-  let totalAtendidas = 0;
-  let totalAnuladas = 0;
-  let totalRevertidas = 0;
-  let ultimoAtendimentoMs = null;
-  let ultimoIntervaloSeg = null;
-  let historicoAtendimentos = []; // { pessoa, t }
+export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
+  // 1. Identificar configuração de filas ativas da sessão
+  const evInicio = eventos.find(e => e.tipo === 'sessao_iniciada');
+  const cfg = {
+    filasAtivas: [1],
+    ...configParam,
+    ...(evInicio?.config?.config || evInicio?.config || {})
+  };
+
+  // Garante que filasAtivas seja array numérico (ex: [1], [1, 2], [1, 2, 3])
+  const filasAtivasConfig = Array.isArray(cfg.filasAtivas) && cfg.filasAtivas.length > 0
+    ? cfg.filasAtivas.map(Number)
+    : [1];
+
+  // Identificar filas desativadas até t
+  const filasDesativadasMap = new Map(); // fila -> desativadaEm (ms)
+  for (const ev of eventos) {
+    if (ev.t <= t && ev.tipo === 'fila_desativada') {
+      const fNum = Number(ev.fila || 1);
+      filasDesativadasMap.set(fNum, ev.t);
+    }
+  }
+
+  // Estrutura de cada fila
+  const filas = {
+    1: criarEstruturaFila(1, filasAtivasConfig.includes(1), filasDesativadasMap.get(1) || null),
+    2: criarEstruturaFila(2, filasAtivasConfig.includes(2), filasDesativadasMap.get(2) || null),
+    3: criarEstruturaFila(3, filasAtivasConfig.includes(3), filasDesativadasMap.get(3) || null)
+  };
+
+  const pessoas = new Map(); // chave: `${fila}_${pId}` -> objeto pessoa
 
   // Filtrar eventos até o instante t
   const eventosValidos = eventos.filter(ev => ev.t <= t);
 
   for (const ev of eventosValidos) {
+    const fNum = Number(ev.fila || 1);
+    const filaObj = filas[fNum];
+
+    // Ignora eventos de auditoria pura no estado da fila
+    if (ev.tipo === 'atribuicao' || ev.tipo === 'sessao_iniciada' || ev.tipo === 'sessao_encerrada' || ev.tipo === 'anotacao' || ev.tipo === 'fila_desativada') {
+      continue;
+    }
+
+    if (!filaObj) continue;
+
+    // Se a fila foi desativada antes do evento, ignora comandos posteriores
+    if (filaObj.desativadaEm !== null && ev.t > filaObj.desativadaEm) {
+      continue;
+    }
+
+    const pId = ev.pessoa;
+    const chavePessoa = `${fNum}_${pId}`;
+
     if (ev.tipo === 'chegada') {
-      totalChegadas++;
-      const pId = ev.pessoa;
-      pessoas.set(pId, {
+      filaObj.contadores.chegadas++;
+      filaObj.totalEventos++;
+
+      pessoas.set(chavePessoa, {
         pessoa: pId,
+        fila: fNum,
         status: 'esperando',
         chegadaMs: ev.t,
         atendimentoMs: null,
@@ -37,49 +80,54 @@ export function derivarEstado(eventos = [], t = Infinity) {
         dispositivoChegada: ev.dispositivoNome || 'Desconhecido',
         dispositivoAtendimento: null,
         esperaMs: null,
-        intervaloAtendimentoMs: null
+        intervaloAtendimentoMs: null,
+        ajuste: !!ev.ajuste,
+        encadeado: !!ev.encadeado
       });
-      fila.push(pId);
+
+      filaObj.fila.push(pId);
     } else if (ev.tipo === 'atendimento') {
-      const pId = ev.pessoa;
-      const idx = fila.indexOf(pId);
+      filaObj.totalEventos++;
+      const idx = filaObj.fila.indexOf(pId);
       if (idx !== -1) {
-        fila.splice(idx, 1);
+        filaObj.fila.splice(idx, 1);
       }
-      const p = pessoas.get(pId);
+      const p = pessoas.get(chavePessoa);
       if (p) {
         p.status = 'atendida';
         p.atendimentoMs = ev.t;
         p.dispositivoAtendimento = ev.dispositivoNome || 'Desconhecido';
         p.esperaMs = Math.max(0, ev.t - p.chegadaMs);
 
-        if (ultimoAtendimentoMs !== null) {
-          const deltaMs = Math.max(0, ev.t - ultimoAtendimentoMs);
+        if (filaObj.ultimoAtendimentoMs !== null) {
+          const deltaMs = Math.max(0, ev.t - filaObj.ultimoAtendimentoMs);
           p.intervaloAtendimentoMs = deltaMs;
-          ultimoIntervaloSeg = deltaMs / 1000;
+          filaObj.ultimoIntervaloSeg = deltaMs / 1000;
         } else {
           p.intervaloAtendimentoMs = null;
-          ultimoIntervaloSeg = null;
+          filaObj.ultimoIntervaloSeg = null;
         }
-        ultimoAtendimentoMs = ev.t;
-        historicoAtendimentos.push({ pessoa: pId, t: ev.t });
-        totalAtendidas++;
+
+        filaObj.ultimoAtendimentoMs = ev.t;
+        filaObj.historicoAtendimentos.push({ pessoa: pId, t: ev.t });
+        filaObj.contadores.atendidas++;
       }
     } else if (ev.tipo === 'anulacao') {
-      const pId = ev.pessoa;
-      const idx = fila.indexOf(pId);
+      filaObj.totalEventos++;
+      const idx = filaObj.fila.indexOf(pId);
       if (idx !== -1) {
-        fila.splice(idx, 1);
+        filaObj.fila.splice(idx, 1);
       }
-      const p = pessoas.get(pId);
+      const p = pessoas.get(chavePessoa);
       if (p) {
         p.status = 'anulada';
         p.anulacaoMs = ev.t;
-        totalAnuladas++;
+        if (ev.ajuste) p.ajuste = true;
+        filaObj.contadores.anuladas++;
       }
     } else if (ev.tipo === 'reversao') {
-      const pId = ev.pessoa;
-      const p = pessoas.get(pId);
+      filaObj.totalEventos++;
+      const p = pessoas.get(chavePessoa);
       if (p) {
         p.status = 'esperando';
         p.atendimentoMs = null;
@@ -88,82 +136,123 @@ export function derivarEstado(eventos = [], t = Infinity) {
         p.intervaloAtendimentoMs = null;
 
         // Reinsere a pessoa no início da fila
-        if (!fila.includes(pId)) {
-          fila.unshift(pId);
+        if (!filaObj.fila.includes(pId)) {
+          filaObj.fila.unshift(pId);
         }
 
-        // Remove do histórico de atendimentos
-        const idxHist = historicoAtendimentos.map(h => h.pessoa).lastIndexOf(pId);
+        // Remove do histórico de atendimentos da fila
+        const idxHist = filaObj.historicoAtendimentos.map(h => h.pessoa).lastIndexOf(pId);
         if (idxHist !== -1) {
-          historicoAtendimentos.splice(idxHist, 1);
+          filaObj.historicoAtendimentos.splice(idxHist, 1);
         }
 
-        // Recalcula o último atendimento
-        if (historicoAtendimentos.length > 0) {
-          ultimoAtendimentoMs = historicoAtendimentos[historicoAtendimentos.length - 1].t;
-          if (historicoAtendimentos.length >= 2) {
-            const penultimo = historicoAtendimentos[historicoAtendimentos.length - 2].t;
-            ultimoIntervaloSeg = Math.max(0, ultimoAtendimentoMs - penultimo) / 1000;
+        // Recalcula o último atendimento da fila
+        if (filaObj.historicoAtendimentos.length > 0) {
+          filaObj.ultimoAtendimentoMs = filaObj.historicoAtendimentos[filaObj.historicoAtendimentos.length - 1].t;
+          if (filaObj.historicoAtendimentos.length >= 2) {
+            const penultimo = filaObj.historicoAtendimentos[filaObj.historicoAtendimentos.length - 2].t;
+            filaObj.ultimoIntervaloSeg = Math.max(0, filaObj.ultimoAtendimentoMs - penultimo) / 1000;
           } else {
-            ultimoIntervaloSeg = null;
+            filaObj.ultimoIntervaloSeg = null;
           }
         } else {
-          ultimoAtendimentoMs = null;
-          ultimoIntervaloSeg = null;
+          filaObj.ultimoAtendimentoMs = null;
+          filaObj.ultimoIntervaloSeg = null;
         }
 
-        totalAtendidas = Math.max(0, totalAtendidas - 1);
-        totalRevertidas++;
+        filaObj.contadores.atendidas = Math.max(0, filaObj.contadores.atendidas - 1);
+        filaObj.contadores.revertidas++;
+
+        // Encadeamento Fila 1 -> Fila 2: reverter a catraca da Fila 1 desfaz a entrada na Fila 2
+        if (fNum === 1 && filas[2].ativa) {
+          const idxFila2 = filas[2].fila.indexOf(pId);
+          if (idxFila2 !== -1) {
+            filas[2].fila.splice(idxFila2, 1);
+            filas[2].contadores.chegadas = Math.max(0, filas[2].contadores.chegadas - 1);
+            pessoas.delete(`2_${pId}`);
+          }
+        }
       }
     }
   }
 
-  // Define o status derivado "na_catraca" (verde): sempre a primeira pessoa da fila ativa
-  for (let i = 0; i < fila.length; i++) {
-    const pId = fila[i];
-    const p = pessoas.get(pId);
-    if (p) {
-      if (i === 0) {
-        p.status = 'na_catraca';
-      } else {
-        p.status = 'esperando';
-      }
-    }
-  }
-
-  const primeiraDaFila = fila.length > 0 ? fila[0] : null;
-
-  // Cálculo da vazão recente nos últimos 5 minutos
+  // 2. Finalizar estados derivados por fila
   const tReferencia = (t !== Infinity && t !== null && !isNaN(t))
     ? t
     : (eventosValidos.length > 0 ? eventosValidos[eventosValidos.length - 1].t : Date.now());
-  const cincoMinAtras = tReferencia - (5 * 60 * 1000);
-  const atendimentosUltimos5Min = historicoAtendimentos.filter(h => h.t >= cincoMinAtras && h.t <= tReferencia).length;
-  const vazaoRecente = atendimentosUltimos5Min / 5; // pessoas/min
 
-  // Tempo de espera da pessoa que está atualmente na catraca (se houver)
-  let esperaNaCatracaMs = 0;
-  if (primeiraDaFila !== null) {
-    const pCatraca = pessoas.get(primeiraDaFila);
-    if (pCatraca) {
-      esperaNaCatracaMs = Math.max(0, tReferencia - pCatraca.chegadaMs);
+  for (const fNum of [1, 2, 3]) {
+    const fo = filas[fNum];
+    fo.contadores.naFila = fo.fila.length;
+    fo.primeiraDaFila = fo.fila.length > 0 ? fo.fila[0] : null;
+
+    // Define status derivado na cabeça de cada fila
+    const statusCabeca = fNum === 1 ? 'na_catraca' : (fNum === 2 ? 'nas_mesas' : 'na_saida');
+    for (let i = 0; i < fo.fila.length; i++) {
+      const pId = fo.fila[i];
+      const p = pessoas.get(`${fNum}_${pId}`);
+      if (p) {
+        p.status = (i === 0) ? statusCabeca : 'esperando';
+      }
     }
+
+    // Tempo de espera da pessoa que está atualmente na cabeça da fila
+    fo.esperaNaCabecaMs = 0;
+    if (fo.primeiraDaFila !== null) {
+      const pCabeca = pessoas.get(`${fNum}_${fo.primeiraDaFila}`);
+      if (pCabeca) {
+        fo.esperaNaCabecaMs = Math.max(0, tReferencia - pCabeca.chegadaMs);
+      }
+    }
+
+    // Vazão recente dos últimos 5 minutos
+    const cincoMinAtras = tReferencia - (5 * 60 * 1000);
+    const atendimentosUltimos5Min = fo.historicoAtendimentos.filter(h => h.t >= cincoMinAtras && h.t <= tReferencia).length;
+    fo.vazaoRecente = atendimentosUltimos5Min / 5;
+
+    // Fila ativa sem nenhum evento é "semDados"
+    fo.semDados = fo.ativa && fo.totalEventos === 0;
   }
 
+  // Compatibilidade com raiz (Fila 1) para testes e interfaces legadas
+  const f1 = filas[1];
+  const pessoasArray = Array.from(pessoas.values());
+
   return {
-    pessoas: Array.from(pessoas.values()),
-    fila,
-    primeiraDaFila,
-    esperaNaCatracaMs,
+    filasAtivas: filasAtivasConfig,
+    filas,
+    pessoas: pessoasArray,
+    // Propriedades raiz para compatibilidade estrita com Fila 1:
+    fila: f1.fila,
+    primeiraDaFila: f1.primeiraDaFila,
+    esperaNaCatracaMs: f1.esperaNaCabecaMs,
+    contadores: f1.contadores,
+    vazaoRecente: f1.vazaoRecente,
+    ultimoIntervaloSeg: f1.ultimoIntervaloSeg
+  };
+}
+
+function criarEstruturaFila(id, ativa, desativadaEm) {
+  return {
+    id,
+    ativa: !!ativa && desativadaEm === null,
+    desativadaEm,
+    semDados: false,
+    totalEventos: 0,
+    fila: [],
+    primeiraDaFila: null,
+    esperaNaCabecaMs: 0,
     contadores: {
-      chegadas: totalChegadas,
-      atendidas: totalAtendidas,
-      anuladas: totalAnuladas,
-      revertidas: totalRevertidas,
-      naFila: fila.length
+      chegadas: 0,
+      atendidas: 0,
+      anuladas: 0,
+      revertidas: 0,
+      naFila: 0
     },
-    vazaoRecente,
-    ultimoIntervaloSeg
+    vazaoRecente: 0,
+    ultimoAtendimentoMs: null,
+    ultimoIntervaloSeg: null,
+    historicoAtendimentos: []
   };
 }
 
@@ -171,55 +260,83 @@ export function derivarEstado(eventos = [], t = Infinity) {
  * Calcula a diferença operacional de animação entre dois estados consecutivos.
  * @param {Object|null} anterior - Estado anterior retornado por derivarEstado.
  * @param {Object} novo - Novo estado retornado por derivarEstado.
- * @returns {Array<Object>} Lista de operações de animação: entrar(N), confirmar(N), avancar, anular(N), reverter(N).
+ * @returns {Array<Object>} Lista de operações de animação: entrar, confirmar, avancar, anular, reverter, transferir, desativar_fila.
  */
 export function diffEstado(anterior, novo) {
   if (!novo) return [];
   if (!anterior) {
-    // Se não há estado anterior, gera as entradas para a fila atual
-    return novo.fila.map(pessoa => ({ op: 'entrar', pessoa }));
+    // Se não há estado anterior, gera as entradas para as filas ativas atuais
+    const ops = [];
+    for (const fNum of [1, 2, 3]) {
+      const fila = novo.filas?.[fNum]?.fila || (fNum === 1 ? novo.fila : []);
+      for (const pessoa of fila) {
+        ops.push({ op: 'entrar', fila: fNum, pessoa });
+      }
+    }
+    return ops;
   }
 
   const operacoes = [];
-  const filaAntiga = anterior.fila || [];
-  const filaNova = novo.fila || [];
 
-  // 1. Checagem de novas chegadas (itens em novo que não existiam no anterior)
-  const pessoasAntigas = new Set((anterior.pessoas || []).map(p => p.pessoa));
-  const novasPessoas = (novo.pessoas || []).filter(p => !pessoasAntigas.has(p.pessoa));
-  for (const p of novasPessoas) {
-    operacoes.push({ op: 'entrar', pessoa: p.pessoa });
-  }
+  for (const fNum of [1, 2, 3]) {
+    const filaAntiga = anterior.filas?.[fNum]?.fila || (fNum === 1 ? anterior.fila : []) || [];
+    const filaNova = novo.filas?.[fNum]?.fila || (fNum === 1 ? novo.fila : []) || [];
 
-  // 2. Checagem de confirmação de atendimento (cabeça antiga que passou para atendida)
-  const cabecaAntiga = filaAntiga[0];
-  if (cabecaAntiga !== undefined) {
-    const pNovo = (novo.pessoas || []).find(p => p.pessoa === cabecaAntiga);
-    if (pNovo && pNovo.status === 'atendida') {
-      operacoes.push({ op: 'confirmar', pessoa: cabecaAntiga });
-      operacoes.push({ op: 'avancar' });
+    const pessoasAntigasFila = new Set(
+      (anterior.pessoas || []).filter(p => (p.fila || 1) === fNum).map(p => p.pessoa)
+    );
+
+    // 1. Checagem de desativação de fila
+    const ativaAntiga = anterior.filas?.[fNum]?.ativa !== false;
+    const ativaNova = novo.filas?.[fNum]?.ativa !== false;
+    if (ativaAntiga && !ativaNova) {
+      operacoes.push({ op: 'desativar_fila', fila: fNum });
     }
-  }
 
-  // 3. Checagem de anulações
-  const anuladasAntigas = new Set(
-    (anterior.pessoas || []).filter(p => p.status === 'anulada').map(p => p.pessoa)
-  );
-  const novasAnuladas = (novo.pessoas || []).filter(
-    p => p.status === 'anulada' && !anuladasAntigas.has(p.pessoa)
-  );
-  for (const p of novasAnuladas) {
-    operacoes.push({ op: 'anular', pessoa: p.pessoa });
-  }
+    // 2. Checagem de novas chegadas
+    const novasPessoas = (novo.pessoas || []).filter(
+      p => (p.fila || 1) === fNum && !pessoasAntigasFila.has(p.pessoa)
+    );
+    for (const p of novasPessoas) {
+      if (fNum === 2 && p.encadeado) {
+        // Encadeamento Fila 1 -> Fila 2
+        operacoes.push({ op: 'transferir', deFila: 1, paraFila: 2, pessoa: p.pessoa });
+      } else {
+        operacoes.push({ op: 'entrar', fila: fNum, pessoa: p.pessoa, ajuste: !!p.ajuste });
+      }
+    }
 
-  // 4. Checagem de reversão (pessoa que estava atendida e voltou para a fila)
-  if (novo.contadores.revertidas > (anterior.contadores.revertidas || 0)) {
-    const cabecaNova = filaNova[0];
-    if (cabecaNova !== undefined) {
-      operacoes.push({ op: 'reverter', pessoa: cabecaNova });
+    // 3. Checagem de confirmação de atendimento
+    const cabecaAntiga = filaAntiga[0];
+    if (cabecaAntiga !== undefined) {
+      const pNovo = (novo.pessoas || []).find(p => (p.fila || 1) === fNum && p.pessoa === cabecaAntiga);
+      if (pNovo && pNovo.status === 'atendida') {
+        operacoes.push({ op: 'confirmar', fila: fNum, pessoa: cabecaAntiga });
+        operacoes.push({ op: 'avancar', fila: fNum });
+      }
+    }
+
+    // 4. Checagem de anulações
+    const anuladasAntigas = new Set(
+      (anterior.pessoas || []).filter(p => (p.fila || 1) === fNum && p.status === 'anulada').map(p => p.pessoa)
+    );
+    const novasAnuladas = (novo.pessoas || []).filter(
+      p => (p.fila || 1) === fNum && p.status === 'anulada' && !anuladasAntigas.has(p.pessoa)
+    );
+    for (const p of novasAnuladas) {
+      operacoes.push({ op: 'anular', fila: fNum, pessoa: p.pessoa, ajuste: !!p.ajuste });
+    }
+
+    // 5. Checagem de reversões
+    const revertidasAntigas = anterior.filas?.[fNum]?.contadores?.revertidas ?? (fNum === 1 ? anterior.contadores?.revertidas : 0) ?? 0;
+    const revertidasNovas = novo.filas?.[fNum]?.contadores?.revertidas ?? (fNum === 1 ? novo.contadores?.revertidas : 0) ?? 0;
+    if (revertidasNovas > revertidasAntigas) {
+      const cabecaNova = filaNova[0];
+      if (cabecaNova !== undefined) {
+        operacoes.push({ op: 'reverter', fila: fNum, pessoa: cabecaNova });
+      }
     }
   }
 
   return operacoes;
 }
-

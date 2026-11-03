@@ -1,28 +1,31 @@
 /**
  * public/conexao.js
- * Gerenciador de conexão WebSocket, reconexão automática com recuo exponencial,
- * sincronização de relógio (5 trocas de mensagens), batimento (ping) a cada 5s
- * e fila de saída persistida em localStorage para operação offline resiliente.
+ * Gerenciador de conexão WebSocket, reconexão automática ultra-resiliente,
+ * recuperação instantânea após tela apagada/bloqueio (< 3s), sincronização de relógio,
+ * batimento (ping) a cada 5s com detecção de queda em 8s e fila de saída persistente em localStorage.
  */
 
-const STORAGE_KEY_OFFLINE = 'ru_fila_offline_queue_v1';
+const STORAGE_KEY_OFFLINE = 'ru_fila_offline_queue_v2';
 const STORAGE_KEY_PIN = 'ru_fila_pin_salvo';
-const STORAGE_KEY_DISP = 'ru_fila_disp_info';
+const STORAGE_KEY_DISP = 'ru_fila_disp_info_v2';
 
 export class GerenciadorConexao {
   constructor(opcoes = {}) {
     this.ws = null;
-    this.pin = localStorage.getItem(STORAGE_KEY_PIN) || '';
+    this.pin = localStorage.getItem(STORAGE_KEY_PIN) || '1234';
     this.dispositivo = JSON.parse(localStorage.getItem(STORAGE_KEY_DISP) || 'null') || {
-      id: `disp_${Math.random().toString(36).substring(2, 9)}`,
+      id: `cel_${Math.random().toString(36).substring(2, 9)}`,
       nome: 'Celular',
-      papel: 'ambos'
+      papel: 'ambos',
+      area: '1'
     };
 
+    this.ultimoSeqConhecido = 0;
     this.estadoConexao = 'offline'; // 'conectado' | 'reconectando' | 'offline'
     this.tentativasReconexao = 0;
     this.timerReconexao = null;
     this.timerPing = null;
+    this.timerTimeoutPong = null;
     this.offsetRelogioMs = 0;
     this.latenciaMs = 0;
 
@@ -35,6 +38,35 @@ export class GerenciadorConexao {
     this.onStatusConexao = opcoes.onStatusConexao || (() => {});
     this.onComandoResposta = opcoes.onComandoResposta || (() => {});
     this.onComandoRejeitado = opcoes.onComandoRejeitado || (() => {});
+    this.onAreaAtualizada = opcoes.onAreaAtualizada || (() => {});
+
+    // Recuperação imediata ao reativar a tela ou foco do navegador
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        console.log('[CONEXAO] Tela reativada (visibilitychange). Verificando conexão...');
+        if (!this.estaConectado()) {
+          this.reconectarImediatamente();
+        }
+      }
+    });
+
+    window.addEventListener('pageshow', () => {
+      if (!this.estaConectado()) {
+        console.log('[CONEXAO] pageshow detectado. Reconectando...');
+        this.reconectarImediatamente();
+      }
+    });
+
+    window.addEventListener('focus', () => {
+      if (!this.estaConectado()) {
+        this.reconectarImediatamente();
+      }
+    });
+
+    window.addEventListener('online', () => {
+      console.log('[CONEXAO] Rede restabelecida (online).');
+      this.reconectarImediatamente();
+    });
 
     // Alerta ao fechar página com eventos pendentes
     window.addEventListener('beforeunload', (e) => {
@@ -46,12 +78,28 @@ export class GerenciadorConexao {
     });
   }
 
-  salvarCredenciais(pin, nome, papel) {
-    this.pin = String(pin).trim();
-    this.dispositivo.nome = nome || this.dispositivo.nome;
-    this.dispositivo.papel = papel || this.dispositivo.papel;
+  salvarCredenciais(pin, nome, area, papel) {
+    if (pin !== undefined && pin !== null) this.pin = String(pin).trim();
+    if (nome) this.dispositivo.nome = nome;
+    if (area !== undefined) this.dispositivo.area = String(area);
+    if (papel) this.dispositivo.papel = papel;
+
     localStorage.setItem(STORAGE_KEY_PIN, this.pin);
     localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+  }
+
+  mudarArea(novaArea) {
+    this.dispositivo.area = String(novaArea);
+    localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+
+    if (this.estaConectado()) {
+      this.enviar({
+        tipo: 'mudar_area',
+        dispositivoId: this.dispositivo.id,
+        dispositivoNome: this.dispositivo.nome,
+        novaArea: this.dispositivo.area
+      });
+    }
   }
 
   conectar() {
@@ -74,7 +122,7 @@ export class GerenciadorConexao {
     }
 
     this.ws.onopen = () => {
-      console.log('[WS] Conexão física estabelecida. Enviando autenticação...');
+      console.log('[WS] Conexão estabelecida. Enviando credenciais salvas...');
       this.tentativasReconexao = 0;
       this.enviarAutenticacao();
     };
@@ -89,7 +137,7 @@ export class GerenciadorConexao {
     };
 
     this.ws.onclose = () => {
-      console.warn('[WS] Conexão encerrada.');
+      console.warn('[WS] Conexão encerrada pelo servidor ou suspensa pelo celular.');
       this.pararPing();
       this.atualizarStatus('reconectando');
       this.agendarReconexao();
@@ -97,8 +145,28 @@ export class GerenciadorConexao {
 
     this.ws.onerror = (err) => {
       console.warn('[WS] Erro no socket:', err);
-      this.ws.close();
+      if (this.ws) {
+        try { this.ws.close(); } catch (e) {}
+      }
     };
+  }
+
+  reconectarImediatamente() {
+    if (this.timerReconexao) {
+      clearTimeout(this.timerReconexao);
+      this.timerReconexao = null;
+    }
+    this.tentativasReconexao = 0;
+
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
+    }
+    this.conectar();
   }
 
   enviarAutenticacao() {
@@ -112,14 +180,16 @@ export class GerenciadorConexao {
       pin: this.pin,
       dispositivoId: this.dispositivo.id,
       dispositivoNome: this.dispositivo.nome,
-      papel: this.dispositivo.papel
+      area: this.dispositivo.area || '1',
+      papel: this.dispositivo.papel || 'ambos',
+      ultimoSeq: this.ultimoSeqConhecido || 0
     });
   }
 
   agendarReconexao() {
     if (this.timerReconexao) clearTimeout(this.timerReconexao);
-    // Recuo exponencial com teto de 3 segundos
-    const atraso = Math.min(3000, 500 * Math.pow(1.5, this.tentativasReconexao));
+    // Recuo com teto máximo estrito de 3 segundos
+    const atraso = Math.min(3000, 400 * Math.pow(1.4, this.tentativasReconexao));
     this.tentativasReconexao++;
     this.timerReconexao = setTimeout(() => {
       this.conectar();
@@ -130,12 +200,18 @@ export class GerenciadorConexao {
     this.pararPing();
     this.timerPing = setInterval(() => {
       if (this.estaConectado()) {
-        const t1 = Date.now();
         this.enviar({
           tipo: 'ping',
           latencia: this.latenciaMs,
           offsetRelogio: this.offsetRelogioMs
         });
+
+        // Se passar 8 segundos sem pong, considera a conexão morta e reinicia
+        if (this.timerTimeoutPong) clearTimeout(this.timerTimeoutPong);
+        this.timerTimeoutPong = setTimeout(() => {
+          console.warn('[WS] 8 segundos sem resposta de pong. Reiniciando conexão...');
+          this.reconectarImediatamente();
+        }, 8000);
       }
     }, 5000);
   }
@@ -145,23 +221,25 @@ export class GerenciadorConexao {
       clearInterval(this.timerPing);
       this.timerPing = null;
     }
+    if (this.timerTimeoutPong) {
+      clearTimeout(this.timerTimeoutPong);
+      this.timerTimeoutPong = null;
+    }
   }
 
-  /**
-   * Executa 5 trocas de mensagens para estimar o descompasso entre o relógio do celular e do servidor.
-   */
   sincronizarRelogio() {
     const amostras = [];
     let rodada = 0;
 
     const executarRodada = () => {
       if (rodada >= 5) {
-        // Seleciona a amostra com o menor RTT (tempo de ida e volta)
         amostras.sort((a, b) => a.rtt - b.rtt);
         const melhorAmostra = amostras[0];
-        this.offsetRelogioMs = melhorAmostra.offset;
-        this.latenciaMs = Math.round(melhorAmostra.rtt / 2);
-        console.log(`[SYNC] Relógio sincronizado! Offset: ${this.offsetRelogioMs} ms, Latência RTT: ${melhorAmostra.rtt} ms`);
+        if (melhorAmostra) {
+          this.offsetRelogioMs = melhorAmostra.offset;
+          this.latenciaMs = Math.round(melhorAmostra.rtt / 2);
+          console.log(`[SYNC] Relógio sincronizado! Offset: ${this.offsetRelogioMs} ms, Latência RTT: ${melhorAmostra.rtt} ms`);
+        }
         return;
       }
 
@@ -182,8 +260,10 @@ export class GerenciadorConexao {
         } catch (e) {}
       };
 
-      this.ws.addEventListener('message', handler);
-      this.enviar({ tipo: 'sync_ping', tCliente1, rodada });
+      if (this.ws) {
+        this.ws.addEventListener('message', handler);
+        this.enviar({ tipo: 'sync_ping', tCliente1, rodada });
+      }
     };
 
     executarRodada();
@@ -196,10 +276,20 @@ export class GerenciadorConexao {
         this.sincronizarRelogio();
         this.iniciarPing();
 
-        // Envia o estado e histórico recebidos
+        if (msg.sessao?.seq) {
+          this.ultimoSeqConhecido = Math.max(this.ultimoSeqConhecido, msg.sessao.seq);
+        }
+
         if (msg.estado) this.onEstado(msg.estado, msg.sessao);
 
-        // Descarrega eventos offline pendentes
+        // Se recebeu eventos faltantes da reconexão, atualiza o seq
+        if (Array.isArray(msg.eventosFaltantes) && msg.eventosFaltantes.length > 0) {
+          for (const ev of msg.eventosFaltantes) {
+            if (ev.seq > this.ultimoSeqConhecido) this.ultimoSeqConhecido = ev.seq;
+          }
+        }
+
+        // Descarrega eventos offline pendentes em ordem
         this.descarregarFilaOffline();
       } else {
         console.warn('[AUTH] Falha na autenticação:', msg.mensagem);
@@ -210,16 +300,30 @@ export class GerenciadorConexao {
     }
 
     if (msg.tipo === 'pong') {
-      // Ping respondido com sucesso
+      if (this.timerTimeoutPong) {
+        clearTimeout(this.timerTimeoutPong);
+        this.timerTimeoutPong = null;
+      }
+      return;
+    }
+
+    if (msg.tipo === 'area_atualizada') {
+      this.dispositivo.area = String(msg.area);
+      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+      this.onAreaAtualizada(this.dispositivo.area);
       return;
     }
 
     if (msg.tipo === 'novo_evento') {
+      if (msg.evento?.seq) {
+        this.ultimoSeqConhecido = Math.max(this.ultimoSeqConhecido, msg.evento.seq);
+      }
       this.onNovoEvento(msg.evento, msg.estado, msg.diff);
       return;
     }
 
     if (msg.tipo === 'sessao_iniciada') {
+      this.ultimoSeqConhecido = msg.evento?.seq || 1;
       this.onSessaoIniciada(msg.sessao, msg.estado, msg.evento);
       return;
     }
@@ -264,6 +368,7 @@ export class GerenciadorConexao {
     const cmdCompleto = {
       tipo: 'comando',
       ...comando,
+      fila: Number(comando.fila || this.dispositivo.area || 1),
       clientEventId,
       tCliente: Date.now()
     };
@@ -271,7 +376,6 @@ export class GerenciadorConexao {
     if (this.estaConectado()) {
       this.enviar(cmdCompleto);
     } else {
-      // Salva na fila offline persistente
       this.enfileirarOffline(cmdCompleto);
     }
 
@@ -291,7 +395,6 @@ export class GerenciadorConexao {
     if (fila.length === 0) return;
 
     console.log(`[OFFLINE] Descarregando ${fila.length} evento(s) pendente(s)...`);
-    // Envia eventos em ordem cronológica
     for (const cmd of fila) {
       cmd.tardio = true;
       this.enviar(cmd);
@@ -333,4 +436,3 @@ export class GerenciadorConexao {
     this.onStatusConexao(this.estadoConexao, pendentesQtd);
   }
 }
-

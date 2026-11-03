@@ -8,7 +8,6 @@
   <link rel="stylesheet" href="estilo.css">
   <script src="lib/chart.umd.min.js"></script>
   <style>
-    /* Estilos do Player de Reprodução da Fila */
     .player-controls {
       display: flex;
       flex-wrap: wrap;
@@ -54,6 +53,48 @@
       .kpi-grid-relatorio {
         grid-template-columns: repeat(4, 1fr);
       }
+    }
+    /* Estilos de Abas */
+    .tab-nav {
+      display: flex;
+      gap: 8px;
+      border-bottom: 2px solid var(--border-color);
+      margin-bottom: 14px;
+      overflow-x: auto;
+    }
+    .tab-btn {
+      padding: 8px 16px;
+      border: none;
+      background: none;
+      font-weight: 700;
+      font-size: 0.9rem;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 3px solid transparent;
+      margin-bottom: -2px;
+      white-space: nowrap;
+    }
+    .tab-btn.active {
+      color: var(--primary);
+      border-bottom-color: var(--primary);
+    }
+    .tab-btn.sem-dados {
+      color: #94a3b8;
+    }
+    /* Destaque bloco zero passagens */
+    tr.bloco-sem-passagens td {
+      background-color: rgba(220, 38, 38, 0.12) !important;
+      color: var(--danger) !important;
+      font-weight: 700;
+    }
+    .badge-sem-dados {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      color: var(--text-muted);
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      font-weight: 700;
     }
   </style>
 </head>
@@ -104,8 +145,11 @@
       <div class="card">
         <div style="display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:10px;">
           <div>
-            <h2 id="rel-nome" style="font-size:1.35rem; font-weight:800;">Nome da Sessão</h2>
-            <div id="rel-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:2px;">
+            <div style="display:flex; align-items:center; gap:10px;">
+              <button class="btn btn-secondary" onclick="HistoricoApp.voltarParaLista()" style="font-size:0.8rem; padding:3px 8px;">← Voltar</button>
+              <h2 id="rel-nome" style="font-size:1.35rem; font-weight:800; display:inline;">Nome da Sessão</h2>
+            </div>
+            <div id="rel-sub" style="font-size:0.85rem; color:var(--text-muted); margin-top:4px;">
               Local • Início • Duração
             </div>
             <p id="rel-obs" style="font-size:0.85rem; margin-top:4px; font-style:italic; color:var(--text-main);"></p>
@@ -115,21 +159,22 @@
             <button class="btn btn-secondary" onclick="HistoricoApp.copiarResumo()">📋 Copiar Resumo</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvPessoas()">📄 CSV Pessoas</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvEventos()">📝 CSV Eventos</button>
-            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvMetricas()">📊 CSV Métricas</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvResumo()">📊 CSV Resumo</button>
+            <button class="btn btn-secondary" onclick="HistoricoApp.baixarCsvBlocos()">⏱️ CSV Blocos</button>
             <button class="btn btn-secondary" onclick="HistoricoApp.baixarBackupJson()">💾 Backup JSON</button>
             <button class="btn btn-primary" onclick="window.print()">🖨 Imprimir</button>
           </div>
         </div>
       </div>
 
-      <!-- PLAYER DE REPRODUÇÃO DA FILA -->
+      <!-- PLAYER DE REPRODUÇÃO DA FILA (ESBOÇO 960x660) -->
       <div class="card no-print">
         <div class="card-title">
           <span>🎬 Reprodução da Fila ao Longo do Tempo</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">Estado exato calculado por derivarEstado(eventos, t)</span>
+          <span style="font-size:0.75rem; color:var(--text-muted)">Estado exato derivado deterministicamente a cada instante t</span>
         </div>
 
-        <div class="animacao-container grande" id="container-animacao-replay" style="height:210px;"></div>
+        <div class="animacao-container grande" id="container-animacao-replay" style="height:440px;"></div>
 
         <!-- Controles do Player e Barra de Tempo -->
         <div class="player-controls">
@@ -156,110 +201,215 @@
           </div>
 
           <!-- Contadores Sincronizados com o Instante Replay -->
-          <div style="display:flex; gap:16px; font-size:0.8rem; font-weight:700; color:var(--text-muted); width:100%;">
-            <span>Fila: <strong id="rep-fila" style="color:var(--warning)">0</strong></span>
-            <span>Atendidos: <strong id="rep-atendidos" style="color:var(--btn-atendimento-bg)">0</strong></span>
-            <span>Chegadas: <strong id="rep-chegadas" style="color:var(--btn-chegada-bg)">0</strong></span>
-            <span>Anulados: <strong id="rep-anulados">0</strong></span>
+          <div style="display:flex; flex-wrap:wrap; gap:16px; font-size:0.8rem; font-weight:700; color:var(--text-muted); width:100%;" id="rep-contadores-instante">
+            <span>F1: <strong id="rep-f1" style="color:#dc2626">0</strong></span>
+            <span>F2: <strong id="rep-f2" style="color:#16a34a">0</strong></span>
+            <span>F3: <strong id="rep-f3" style="color:#ec4899">0</strong></span>
+            <span>Atendidos/Saídas: <strong id="rep-atendidos" style="color:var(--primary)">0</strong></span>
             <span>Vazão Recente: <strong id="rep-vazao">0,0</strong> p/min</span>
           </div>
         </div>
       </div>
 
-      <!-- KPIS CONSOLIDADOS -->
-      <div class="kpi-grid-relatorio">
-        <div class="hud-stat">
-          <span class="label">Total Chegadas (λ)</span>
-          <span class="value" id="kpi-cheg">0</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-lambda">λ = 0,00 p/min</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Total Atendidos (Vazão)</span>
-          <span class="value" id="kpi-atend">0</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-vazao-global">Vazão = 0,00 p/min</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Utilização (ρ)</span>
-          <span class="value" id="kpi-util">0,0%</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)">ρ = λ / (c·μ)</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Fila Média (L)</span>
-          <span class="value" id="kpi-l">0,0</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pico">Pico: 0 pessoas</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Tempo de Espera Médio</span>
-          <span class="value" id="kpi-espera-media">00:00</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-espera-mediana">Mediana: 00:00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Espera P90 / P95</span>
-          <span class="value" id="kpi-p95">00:00</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-p90">P90: 00:00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Intervalo Médio Catraca</span>
-          <span class="value" id="kpi-int-media">0,0 s</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-int-cv">CV: 0,00</span>
-        </div>
-
-        <div class="hud-stat">
-          <span class="label">Ociosidade da Catraca</span>
-          <span class="value" id="kpi-ocioso">0,0%</span>
-          <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-pausas">0 pausas longas</span>
-        </div>
+      <!-- OPÇÃO DE FILTRO: EXCLUIR PERÍODOS SEM COBERTURA -->
+      <div style="display:flex; justify-content:space-between; align-items:center; background:var(--bg-subtle); padding:10px 14px; border-radius:8px; border:1px solid var(--border-color);" class="no-print">
+        <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.88rem; font-weight:600;">
+          <input type="checkbox" id="chk-excluir-sem-cobertura" onchange="HistoricoApp.toggleExcluirSemCobertura()">
+          <span>Excluir períodos sem cobertura do cálculo de métricas (remove lacunas sem celulares)</span>
+        </label>
+        <span id="lbl-aviso-cobertura" style="font-size:0.8rem; color:var(--text-muted);"></span>
       </div>
 
-      <!-- Lei de Little & Modelo Teórico Erlang C -->
-      <div class="form-grid">
-        <div class="card">
-          <div class="card-title"><span>Lei de Little (L = λ · W)</span></div>
-          <div id="box-little-info" style="font-size:0.88rem; line-height:1.6;"></div>
+      <!-- NAVEGAÇÃO POR ABAS: VISÃO GERAL E POR FILA -->
+      <nav class="tab-nav" id="tab-nav-filas">
+        <button class="tab-btn active" id="tab-btn-geral" onclick="HistoricoApp.selecionarAba('geral')">Visão Geral</button>
+        <!-- Abas dinâmicas F1, F2, F3 inseridas via JS -->
+      </nav>
+
+      <!-- CONTEÚDO DAS ABAS -->
+      <div id="conteudo-abas">
+
+        <!-- ABA: VISÃO GERAL -->
+        <div id="aba-geral" style="display:flex; flex-direction:column; gap:14px;">
+          <!-- Cards Resumo das Filas Ativas -->
+          <div id="cards-resumo-filas-geral" style="display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px;"></div>
+
+          <!-- Card: Tempo Total até as Mesas (F1 + F2) -->
+          <div class="card" id="card-transito-mesas" style="display:none;">
+            <div class="card-title">
+              <span>Percurso Completo: Chegada na Fila 1 até as Mesas (Fila 2)</span>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento catraca</span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
+              <div class="hud-stat">
+                <span class="label">Pessoas que Chegaram às Mesas</span>
+                <span class="value" id="tm-count">0</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Tempo Médio até as Mesas</span>
+                <span class="value" id="tm-media">00:00</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Mediana até as Mesas</span>
+                <span class="value" id="tm-mediana">00:00</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">P90 até as Mesas</span>
+                <span class="value" id="tm-p90">00:00</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Gráfico Comparativo de Filas no Tempo -->
+          <div class="chart-container" style="height:320px;">
+            <div class="card-title"><span>Comprimento das Filas ao Longo do Tempo</span></div>
+            <canvas id="chart-filas-comparativo"></canvas>
+          </div>
         </div>
 
-        <div class="card">
-          <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
-          <div id="box-teorico-info" style="font-size:0.88rem; line-height:1.6;"></div>
+        <!-- ABA: FILA ESPECÍFICA (F1, F2 ou F3) -->
+        <div id="aba-fila-detalhe" style="display:none; flex-direction:column; gap:14px;">
+
+          <!-- Alerta Sem Dados -->
+          <div id="box-sem-dados" style="display:none; background:rgba(217, 119, 6, 0.12); border:1px solid var(--warning); padding:12px; border-radius:8px; color:var(--warning); font-weight:700;">
+            ⚠️ Sem dados: Nenhum evento foi registrado para esta fila durante a sessão.
+          </div>
+
+          <!-- KPIS DA FILA SELECIONADA -->
+          <div id="container-kpis-fila" class="kpi-grid-relatorio">
+            <div class="hud-stat">
+              <span class="label">Total Chegadas (λ)</span>
+              <span class="value" id="kpi-f-cheg">0</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-lambda">λ = 0,00 p/min</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Total Passagens (Vazão)</span>
+              <span class="value" id="kpi-f-atend">0</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-vazao">Vazão = 0,00 p/min</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Utilização (ρ)</span>
+              <span class="value" id="kpi-f-util">0,0%</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-mu">μ = 0,00 p/min</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Fila Média (L)</span>
+              <span class="value" id="kpi-f-l">0,0</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-pico">Pico: 0</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Tempo de Espera Médio</span>
+              <span class="value" id="kpi-f-esp-media">00:00</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-esp-mediana">Mediana: 00:00</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Espera P90 / P95</span>
+              <span class="value" id="kpi-f-esp-p95">00:00</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-esp-p90">P90: 00:00</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Intervalo Médio</span>
+              <span class="value" id="kpi-f-int-media">0,0 s</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-int-cv">CV: 0,00</span>
+            </div>
+
+            <div class="hud-stat">
+              <span class="label">Cobertura da Equipe</span>
+              <span class="value" id="kpi-f-cobertura">100%</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)" id="kpi-f-lacunas">0 lacunas</span>
+            </div>
+          </div>
+
+          <!-- Ociosidade Segmentada & Cobertura da Equipe -->
+          <div class="form-grid">
+            <div class="card">
+              <div class="card-title"><span>Ociosidade Segmentada</span></div>
+              <div id="box-ociosidade-segmentada" style="font-size:0.85rem; line-height:1.7;"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>Cobertura de Coleta & Lacunas</span></div>
+              <div id="box-cobertura-info" style="font-size:0.85rem; line-height:1.7;"></div>
+            </div>
+          </div>
+
+          <!-- Lei de Little & Modelo Teórico Erlang C -->
+          <div class="form-grid">
+            <div class="card">
+              <div class="card-title"><span>Lei de Little (L = λ · W)</span></div>
+              <div id="box-little-info" style="font-size:0.85rem; line-height:1.6;"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
+              <div id="box-teorico-info" style="font-size:0.85rem; line-height:1.6;"></div>
+            </div>
+          </div>
+
+          <!-- TABELA DE BLOCOS DE TEMPO (COM ALERTA ZERO PASSAGENS) -->
+          <div class="card">
+            <div class="card-title">
+              <span>Agregação por Blocos de Tempo</span>
+              <span style="font-size:0.75rem; color:var(--text-muted)">Linhas em vermelho indicam blocos com 0 passagens</span>
+            </div>
+            <div class="table-container" style="max-height:220px;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bloco</th>
+                    <th>Início</th>
+                    <th>Fim</th>
+                    <th>Chegadas</th>
+                    <th>Passagens</th>
+                    <th>Situação</th>
+                  </tr>
+                </thead>
+                <tbody id="tabela-blocos-corpo"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- GRÁFICOS DA FILA -->
+          <div class="chart-container">
+            <div class="card-title"><span>Curvas Acumuladas de Chegadas e Passagens</span></div>
+            <canvas id="chart-acumulado"></canvas>
+          </div>
+
+          <div class="chart-container">
+            <div class="card-title"><span>Chegadas e Passagens por Bloco</span></div>
+            <canvas id="chart-blocos"></canvas>
+          </div>
+
+          <div class="chart-container">
+            <div class="card-title"><span>Distribuição dos Tempos de Espera (Histograma)</span></div>
+            <canvas id="chart-histograma"></canvas>
+          </div>
+
         </div>
-      </div>
 
-      <!-- GRÁFICOS (CHART.JS) -->
-      <div class="chart-container">
-        <div class="card-title"><span>Curvas Acumuladas de Chegadas e Atendimentos</span></div>
-        <canvas id="chart-acumulado"></canvas>
-      </div>
-
-      <div class="chart-container">
-        <div class="card-title"><span>Comprimento da Fila ao Longo do Tempo</span></div>
-        <canvas id="chart-fila-tempo"></canvas>
-      </div>
-
-      <div class="chart-container">
-        <div class="card-title"><span>Chegadas e Atendimentos por Bloco (5 min)</span></div>
-        <canvas id="chart-blocos"></canvas>
-      </div>
-
-      <div class="chart-container">
-        <div class="card-title"><span>Distribuição dos Tempos de Espera (Histograma)</span></div>
-        <canvas id="chart-histograma"></canvas>
       </div>
 
       <!-- TABELA DETALHADA DE PESSOAS -->
       <div class="card">
         <div class="card-title" style="flex-wrap:wrap; gap:8px;">
           <span>Tabela Detalhada de Pessoas</span>
-          <div style="display:flex; gap:8px;">
+          <div style="display:flex; gap:8px; flex-wrap:wrap;">
+            <select id="filtro-fila-tabela" style="padding:4px 8px; font-size:0.85rem;" onchange="HistoricoApp.renderizarTabelaPessoas()">
+              <option value="todas">Todas as Filas</option>
+              <option value="1">Fila 1 (Entrada → Catraca)</option>
+              <option value="2">Fila 2 (Atendimento → Mesas)</option>
+              <option value="3">Fila 3 (Mesas → Saída)</option>
+            </select>
             <input type="text" id="filtro-busca-tabela" placeholder="Buscar pessoa..." style="padding:4px 8px; font-size:0.85rem;" oninput="HistoricoApp.renderizarTabelaPessoas()">
             <select id="filtro-status-tabela" style="padding:4px 8px; font-size:0.85rem;" onchange="HistoricoApp.renderizarTabelaPessoas()">
-              <option value="todos">Todos</option>
-              <option value="atendida">Atendidas</option>
+              <option value="todos">Todos os Status</option>
+              <option value="atendida">Atendidas / Saídas</option>
               <option value="anulada">Anuladas</option>
               <option value="esperando">Na Fila</option>
             </select>
@@ -271,12 +421,13 @@
             <thead>
               <tr>
                 <th onclick="HistoricoApp.ordenarTabela('pessoa')">Pessoa ⬍</th>
+                <th>Fila</th>
                 <th onclick="HistoricoApp.ordenarTabela('chegadaMs')">Chegada ⬍</th>
-                <th onclick="HistoricoApp.ordenarTabela('atendimentoMs')">Atendimento ⬍</th>
+                <th onclick="HistoricoApp.ordenarTabela('atendimentoMs')">Passagem / Saída ⬍</th>
                 <th onclick="HistoricoApp.ordenarTabela('esperaMs')">Espera ⬍</th>
                 <th onclick="HistoricoApp.ordenarTabela('intervaloAtendimentoMs')">Intervalo ⬍</th>
                 <th>Disp. Chegada</th>
-                <th>Disp. Atendimento</th>
+                <th>Disp. Saída</th>
                 <th>Situação</th>
               </tr>
             </thead>
@@ -289,15 +440,15 @@
 
   </main>
 
-  <!-- Modais de Comparação e Importação -->
+  <!-- MODAIS DE COMPARAÇÃO E IMPORTAÇÃO -->
   <div class="modal-backdrop" id="modal-comparar">
-    <div class="modal-dialog" style="max-width:850px;">
+    <div class="modal-dialog" style="max-width:880px;">
       <div class="modal-title">
         <span>Comparação de Sessões Lado a Lado</span>
         <button class="btn btn-secondary" onclick="HistoricoApp.fecharModais()">✕</button>
       </div>
       <div id="comparar-checkboxes" style="display:flex; flex-wrap:wrap; gap:10px; margin-bottom:10px;"></div>
-      <div class="table-container" style="max-height:400px;">
+      <div class="table-container" style="max-height:420px;">
         <table id="tabela-comparacao"></table>
       </div>
     </div>
@@ -320,4 +471,3 @@
   <script type="module" src="historico.js"></script>
 </body>
 </html>
-

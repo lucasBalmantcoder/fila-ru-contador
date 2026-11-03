@@ -1,25 +1,29 @@
 /**
  * public/animacao.js
- * Renderizador de animação fiel da fila em SVG com transições CSS.
- * Layout adaptável (paisagem/horizontal e retrato/vertical), acessibilidade visual
- * (cores, formas, números), escalonamento progressivo e agregação +N para filas longas.
+ * Renderizador de animação fiel da fila em SVG, seguindo rigorosamente o esboço visual
+ * do Restaurante Universitário com viewBox="0 0 960 660".
+ * Suporta as três filas (Fila 1 vermelho, Fila 2 verde, Fila 3 rosa), cabeças com cores
+ * do estágio seguinte (verde, rosa, laranja), caixas com contadores, pulso > 10s,
+ * setas direcionais, agrupamento +N e indicação de filas desativadas / sem coleta.
  */
 
 export class AnimadorFila {
   constructor(containerId, opcoes = {}) {
     this.container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
-    this.duracaoChegada = opcoes.duracaoChegada || 0.8;
-    this.duracaoAtendimento = opcoes.duracaoAtendimento || 0.6;
     this.habilitada = true;
+    this.destaqueFila = opcoes.destaqueFila || null; // 1, 2, 3 ou null (todas)
 
     this.estadoAtual = null;
     this.abaEmSegundoPlano = false;
-    this.timerPulsoCatraca = null;
+    this.timerPulso = null;
 
     this.svg = null;
-    this.camadaEstacoes = null;
+    this.camadaFundo = null;
+    this.camadaRotulos = null;
+    this.camadaCaixas = null;
+    this.camadaSetas = null;
     this.camadaPessoas = null;
-    this.camadaIndicador = null;
+    this.camadaBadges = null;
 
     this.iniciar();
   }
@@ -28,305 +32,493 @@ export class AnimadorFila {
     if (!this.container) return;
     this.container.innerHTML = '';
 
-    // Criação do elemento SVG raiz
+    // Elemento SVG com layout fixo viewBox 0 0 960 660 conforme o esboço
     this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.svg.setAttribute('class', 'fila-svg');
-    this.svg.setAttribute('viewBox', '0 0 800 200');
+    this.svg.setAttribute('viewBox', '0 0 960 660');
     this.svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    this.svg.style.width = '100%';
+    this.svg.style.height = 'auto';
+    this.svg.style.maxHeight = '80vh';
+    this.svg.style.display = 'block';
 
-    this.camadaEstacoes = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    // Definição de marcadores para as setas pretas
+    const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+    defs.innerHTML = `
+      <marker id="seta-preta" viewBox="0 0 10 10" refX="6" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+        <path d="M 0 1.5 L 8 5 L 0 8.5 z" fill="#1e293b" />
+      </marker>
+      <style>
+        @keyframes pulsoCabeca {
+          0%, 100% { transform: scale(1); opacity: 1; }
+          50% { transform: scale(1.15); opacity: 0.8; }
+        }
+        .pulso-ativo {
+          animation: pulsoCabeca 1s infinite ease-in-out;
+          transform-origin: center;
+        }
+      </style>
+    `;
+    this.svg.appendChild(defs);
+
+    this.camadaFundo = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaSetas = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaCaixas = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaRotulos = document.createElementNS('http://www.w3.org/2000/svg', 'g');
     this.camadaPessoas = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    this.camadaIndicador = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    this.camadaBadges = document.createElementNS('http://www.w3.org/2000/svg', 'g');
 
-    this.svg.appendChild(this.camadaEstacoes);
+    this.svg.appendChild(this.camadaFundo);
+    this.svg.appendChild(this.camadaSetas);
+    this.svg.appendChild(this.camadaCaixas);
+    this.svg.appendChild(this.camadaRotulos);
     this.svg.appendChild(this.camadaPessoas);
-    this.svg.appendChild(this.camadaIndicador);
+    this.svg.appendChild(this.camadaBadges);
+
     this.container.appendChild(this.svg);
 
-    this.desenharEstacoes();
+    this.desenharEstruturaEstatica();
 
-    // Tratamento de aba em segundo plano
+    // Tratamento de visibilidade de aba
     document.addEventListener('visibilitychange', () => {
       this.abaEmSegundoPlano = document.hidden;
       if (!this.abaEmSegundoPlano && this.estadoAtual) {
-        // Ao voltar do segundo plano, aplica o estado atual diretamente sem fila de transições
-        this.renderizarEstado(this.estadoAtual, false);
+        this.renderizarEstado(this.estadoAtual);
       }
     });
 
-    // Monitoramento de pulso da catraca (> 10s sem confirmação)
-    this.timerPulsoCatraca = setInterval(() => {
-      this.verificarPulsoCatraca();
+    // Pulso para cabeças de fila esperando > 10s
+    this.timerPulso = setInterval(() => {
+      this.verificarPulsos();
     }, 1000);
   }
 
-  desenharEstacoes() {
-    this.camadaEstacoes.innerHTML = '';
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
+  desenharEstruturaEstatica() {
+    this.camadaCaixas.innerHTML = '';
+    this.camadaSetas.innerHTML = '';
+    this.camadaRotulos.innerHTML = '';
 
-    if (isRetrato) {
-      this.svg.setAttribute('viewBox', '0 0 320 600');
+    // 1. Caixas físicas do RU conforme coordenadas exatas do esboço
+    // catraca: (527,173)–(622,258)
+    this.criarCaixa('catraca', 527, 173, 95, 85, 'catraca');
+    // Atendimento: (390,221)–(465,363)
+    this.criarCaixa('atendimento', 390, 221, 75, 142, ['Atendi', 'mento']);
+    // Mesas: (123,172)–(222,258)
+    this.criarCaixa('mesas', 123, 172, 99, 86, 'Mesas');
+    // Saída: (123,462)–(222,548)
+    this.criarCaixa('saida', 123, 462, 99, 86, 'Saída');
 
-      // Caixa Atendimento (Topo)
-      this.desenharCaixa(90, 20, 140, 55, 'Atendimento', '🍽️');
-      // Caixa Catraca
-      this.desenharCaixa(90, 100, 140, 55, 'Catraca', '🛑');
-      // Origem das chegadas (Base)
-      this.desenharCaixa(90, 520, 140, 45, 'Origem', '🚪');
-    } else {
-      this.svg.setAttribute('viewBox', '0 0 850 200');
+    // 2. Setas pretas de sentido idênticas à imagem anexa
+    // Fila 1: seta descendo à direita do trecho vertical
+    this.criarSeta(820, 70, 820, 180);
+    // Fila 1: seta indo para esquerda abaixo do trecho horizontal
+    this.criarSeta(770, 270, 650, 270);
 
-      // Caixa Atendimento (Esquerda)
-      this.desenharCaixa(20, 40, 110, 80, 'Atendimento', '🍽️');
-      // Caixa Catraca (Ao lado)
-      this.desenharCaixa(155, 40, 110, 80, 'Catraca', '🛑');
-      // Origem das chegadas (Abaixo e à direita)
-      this.desenharCaixa(700, 135, 120, 45, 'Origem', '🚪');
-    }
+    // Fila 2: seta descendo à direita de Atendimento
+    this.criarSeta(545, 250, 545, 360);
+    // Fila 2: seta indo para esquerda abaixo de Atendimento
+    this.criarSeta(490, 420, 370, 420);
+    // Fila 2: seta subindo à esquerda de Atendimento
+    this.criarSeta(305, 360, 305, 240);
+    // Fila 2: seta indo para esquerda acima do trecho superior de Atendimento
+    this.criarSeta(350, 165, 240, 165);
+
+    // Fila 3: seta descendo à esquerda de Fila 3
+    this.criarSeta(85, 300, 85, 410);
+
+    // 3. Rótulos das Filas posicionados conforme o desenho
+    this.criarRotuloTexto('rotulo_f1', 700, 185, 'Fila 1');
+    this.criarRotuloTexto('rotulo_f2', 427, 185, 'Fila 2');
+    this.criarRotuloTexto('rotulo_f3', 135, 350, 'Fila 3');
   }
 
-  desenharCaixa(x, y, w, h, label, icone) {
+  criarCaixa(id, x, y, w, h, texto) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('id', `caixa_${id}`);
+
     const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
     rect.setAttribute('x', x);
     rect.setAttribute('y', y);
     rect.setAttribute('width', w);
     rect.setAttribute('height', h);
-    rect.setAttribute('class', 'box-estacao');
+    rect.setAttribute('fill', '#ffffff');
+    rect.setAttribute('stroke', '#000000');
+    rect.setAttribute('stroke-width', '2.5');
+    g.appendChild(rect);
 
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', x + w / 2);
-    text.setAttribute('y', y + h / 2 + 5);
-    text.setAttribute('class', 'box-estacao-label');
-    text.textContent = `${icone} ${label}`;
+    if (Array.isArray(texto)) {
+      const t1 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t1.setAttribute('x', x + w / 2);
+      t1.setAttribute('y', y + h / 2 - 4);
+      t1.setAttribute('text-anchor', 'middle');
+      t1.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+      t1.setAttribute('font-size', '16');
+      t1.setAttribute('font-weight', '500');
+      t1.setAttribute('fill', '#000000');
+      t1.textContent = texto[0];
 
-    this.camadaEstacoes.appendChild(rect);
-    this.camadaEstacoes.appendChild(text);
-  }
+      const t2 = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      t2.setAttribute('x', x + w / 2);
+      t2.setAttribute('y', y + h / 2 + 18);
+      t2.setAttribute('text-anchor', 'middle');
+      t2.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+      t2.setAttribute('font-size', '16');
+      t2.setAttribute('font-weight', '500');
+      t2.setAttribute('fill', '#000000');
+      t2.textContent = texto[1];
 
-  obterPosicaoSlot(indice, totalVisiveis, isRetrato) {
-    if (isRetrato) {
-      // Retrato: vertical de cima para baixo
-      if (indice === 0) {
-        // Catraca
-        return { x: 160, y: 127 };
-      }
-      // Fila abaixo da catraca
-      const yBase = 185;
-      const espacamento = Math.min(32, 320 / Math.max(1, totalVisiveis));
-      return { x: 160, y: yBase + (indice - 1) * espacamento };
+      g.appendChild(t1);
+      g.appendChild(t2);
     } else {
-      // Paisagem: horizontal da esquerda para a direita
-      if (indice === 0) {
-        // Catraca
-        return { x: 210, y: 80 };
-      }
-      // Fila à direita da catraca
-      const xBase = 295;
-      const espacamento = Math.min(42, 480 / Math.max(1, totalVisiveis));
-      return { x: xBase + (indice - 1) * espacamento, y: 80 };
+      const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+      text.setAttribute('x', x + w / 2);
+      text.setAttribute('y', y + h / 2 + 6);
+      text.setAttribute('text-anchor', 'middle');
+      text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+      text.setAttribute('font-size', '16');
+      text.setAttribute('font-weight', '500');
+      text.setAttribute('fill', '#000000');
+      text.textContent = texto;
+      g.appendChild(text);
     }
+
+    // Contador numérico de atendimentos/passagens
+    const cont = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    cont.setAttribute('id', `contador_caixa_${id}`);
+    cont.setAttribute('x', x + w / 2);
+    cont.setAttribute('y', y + h - 8);
+    cont.setAttribute('text-anchor', 'middle');
+    cont.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+    cont.setAttribute('font-size', '12');
+    cont.setAttribute('font-weight', 'bold');
+    cont.setAttribute('fill', '#64748b');
+    cont.textContent = '';
+    g.appendChild(cont);
+
+    this.camadaCaixas.appendChild(g);
   }
 
-  obterPosicaoOrigem(isRetrato) {
-    return isRetrato ? { x: 160, y: 542 } : { x: 760, y: 157 };
+  criarSeta(x1, y1, x2, y2) {
+    const line = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+    line.setAttribute('x1', x1);
+    line.setAttribute('y1', y1);
+    line.setAttribute('x2', x2);
+    line.setAttribute('y2', y2);
+    line.setAttribute('stroke', '#1e293b');
+    line.setAttribute('stroke-width', '2.5');
+    line.setAttribute('marker-end', 'url(#seta-preta)');
+    this.camadaSetas.appendChild(line);
   }
 
-  obterPosicaoAtendimento(isRetrato) {
-    return isRetrato ? { x: 160, y: 47 } : { x: 75, y: 80 };
+  criarRotuloTexto(id, x, y, texto) {
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('id', id);
+    text.setAttribute('x', x);
+    text.setAttribute('y', y);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+    text.setAttribute('font-size', '15');
+    text.setAttribute('font-weight', '500');
+    text.setAttribute('fill', '#334155');
+    text.textContent = texto;
+    this.camadaRotulos.appendChild(text);
   }
 
   /**
-   * Renderiza o estado completo da fila.
-   * @param {Object} estado - Estado derivado de derivarEstado.
-   * @param {boolean} [animar=true] - Se deve aplicar transição suave ou atualizar direto.
+   * Calcula a posição física (x, y, orientação) de um item ao longo do percurso
+   * em função de sua distância d a partir da cabeça da fila.
+   * Orientação: perpendicular ao segmento (se o caminho for vertical, retângulo é horizontal).
    */
-  renderizarEstado(estado, animar = true) {
+  obterPontoNoCaminho(filaNum, d) {
+    if (filaNum === 1) {
+      // Fila 1: da cauda (766, 40) descendo até (766, 210), depois virando para a esquerda até (640, 210)
+      // Cabeça em (640, 210). Trecho horizontal tem comprimento 126.
+      if (d <= 126) {
+        return {
+          x: 640 + d,
+          y: 210,
+          w: 10,
+          h: 24,
+          orientacao: 'horizontal' // trecho horizontal -> retangulo vertical
+        };
+      }
+      const dVert = d - 126;
+      return {
+        x: 766,
+        y: Math.max(30, 210 - dVert),
+        w: 24,
+        h: 10,
+        orientacao: 'vertical' // trecho vertical -> retangulo horizontal
+      };
+    }
+
+    if (filaNum === 2) {
+      // Fila 2: (505, 215) -> (505, 376) -> (350, 376) -> (350, 214) -> (235, 214)
+      // Cabeça em (235, 214).
+      // Segmento 4: (235, 214) -> (350, 214), comprimento 115
+      if (d <= 115) {
+        return { x: 235 + d, y: 214, w: 10, h: 24, orientacao: 'horizontal' };
+      }
+      // Segmento 3: (350, 214) -> (350, 376), comprimento 162
+      if (d <= 277) {
+        const dSub = d - 115;
+        return { x: 350, y: 214 + dSub, w: 24, h: 10, orientacao: 'vertical' };
+      }
+      // Segmento 2: (350, 376) -> (505, 376), comprimento 155
+      if (d <= 432) {
+        const dHoriz = d - 277;
+        return { x: 350 + dHoriz, y: 376, w: 10, h: 24, orientacao: 'horizontal' };
+      }
+      // Segmento 1: (505, 376) -> (505, 215), comprimento 161
+      const dVert = d - 432;
+      return { x: 505, y: Math.max(210, 376 - dVert), w: 24, h: 10, orientacao: 'vertical' };
+    }
+
+    if (filaNum === 3) {
+      // Fila 3: (176, 268) descendo até (176, 432).
+      // Cabeça em (176, 432). Comprimento 164.
+      return {
+        x: 176,
+        y: Math.max(265, 432 - d),
+        w: 24,
+        h: 10,
+        orientacao: 'vertical'
+      };
+    }
+
+    return { x: 0, y: 0, w: 10, h: 10, orientacao: 'horizontal' };
+  }
+
+  obterComprimentoMaximoCaminho(filaNum) {
+    if (filaNum === 1) return 296;
+    if (filaNum === 2) return 593;
+    if (filaNum === 3) return 164;
+    return 200;
+  }
+
+  /**
+   * Renderiza o estado completo das filas.
+   * @param {Object} estado - Estado derivado de derivarEstado.
+   */
+  renderizarEstado(estado) {
     if (!this.habilitada || !this.svg || !estado) return;
     this.estadoAtual = estado;
 
-    const fila = estado.fila || [];
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
-    const maxVisiveis = 25;
-    const visiveis = fila.slice(0, maxVisiveis);
-    const excedente = fila.length - visiveis.length;
+    this.camadaPessoas.innerHTML = '';
+    this.camadaBadges.innerHTML = '';
 
-    // Se a aba estiver em segundo plano, não anima
-    if (this.abaEmSegundoPlano) animar = false;
+    const filasAtivas = estado.filasAtivas || [1];
 
-    // Escalonamento progressivo para filas longas
-    let raio = 18;
-    if (visiveis.length > 15) raio = 15;
-    if (visiveis.length > 20) raio = 13;
-
-    // Mapeamento dos nós já existentes no SVG
-    const nosExistentes = new Map();
-    for (const no of Array.from(this.camadaPessoas.children)) {
-      const pId = parseInt(no.getAttribute('data-pessoa'), 10);
-      if (pId) nosExistentes.set(pId, no);
+    // Atualiza contadores nas caixas
+    const contCatraca = document.getElementById('contador_caixa_catraca');
+    if (contCatraca) {
+      const totalPassaram = estado.filas?.[1]?.contadores?.atendidas ?? estado.contadores?.atendidas ?? 0;
+      contCatraca.textContent = `${totalPassaram} passaram`;
     }
 
-    const idsAtuais = new Set(visiveis);
-
-    // 1. Remove nós que não estão mais visíveis na fila
-    for (const [pId, no] of nosExistentes.entries()) {
-      if (!idsAtuais.has(pId)) {
-        if (animar) {
-          no.style.opacity = '0';
-          setTimeout(() => no.remove(), 400);
-        } else {
-          no.remove();
-        }
-      }
+    const contMesas = document.getElementById('contador_caixa_mesas');
+    if (contMesas) {
+      const totalMesas = estado.filas?.[2]?.contadores?.atendidas ?? 0;
+      contMesas.textContent = `${totalMesas} chegaram`;
     }
 
-    // 2. Atualiza ou cria elementos para as pessoas visíveis
-    for (let i = 0; i < visiveis.length; i++) {
-      const pId = visiveis[i];
-      const pos = this.obterPosicaoSlot(i, visiveis.length, isRetrato);
-      let g = nosExistentes.get(pId);
+    const contSaida = document.getElementById('contador_caixa_saida');
+    if (contSaida) {
+      const totalSaida = estado.filas?.[3]?.contadores?.atendidas ?? 0;
+      contSaida.textContent = `${totalSaida} saíram`;
+    }
 
-      const ehCatraca = (i === 0);
+    // Renderiza cada fila (1, 2, 3)
+    for (const fNum of [1, 2, 3]) {
+      const fObj = estado.filas?.[fNum];
+      const ativa = filasAtivas.includes(fNum) && fObj?.ativa !== false;
+      const filaArray = fObj?.fila || (fNum === 1 ? estado.fila : []) || [];
 
-      if (!g) {
-        // Nova pessoa entrando na visualização
-        g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-        g.setAttribute('class', 'pessoa-item');
-        g.setAttribute('data-pessoa', pId);
-
-        const posOrigem = this.obterPosicaoOrigem(isRetrato);
-        g.setAttribute('transform', `translate(${posOrigem.x}, ${posOrigem.y})`);
-
-        const circulo = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circulo.setAttribute('r', raio);
-        circulo.setAttribute('class', 'pessoa-circulo origem');
-
-        const texto = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        texto.setAttribute('class', 'pessoa-numero');
-        texto.textContent = pId;
-
-        g.appendChild(circulo);
-        g.appendChild(texto);
-        this.camadaPessoas.appendChild(g);
-
-        // Força reflow antes da animação de deslizamento
-        void g.getBoundingClientRect();
-      }
-
-      // Atualiza raio e classes do círculo
-      const circulo = g.querySelector('circle');
-      if (circulo) {
-        circulo.setAttribute('r', raio);
-        if (ehCatraca) {
-          circulo.setAttribute('class', 'pessoa-circulo catraca');
+      // Atualiza rótulo da fila com estado e quantidade
+      const rotuloEl = document.getElementById(`rotulo_f${fNum}`);
+      if (rotuloEl) {
+        if (!filasAtivas.includes(fNum)) {
+          rotuloEl.textContent = `Fila ${fNum} (não coletada)`;
+          rotuloEl.setAttribute('fill', '#94a3b8');
+        } else if (fObj?.desativadaEm) {
+          rotuloEl.textContent = `Fila ${fNum} (desativada)`;
+          rotuloEl.setAttribute('fill', '#94a3b8');
+        } else if (fObj?.semDados) {
+          rotuloEl.textContent = `Fila ${fNum} (sem dados)`;
+          rotuloEl.setAttribute('fill', '#d97706');
         } else {
-          circulo.setAttribute('class', 'pessoa-circulo fila');
+          rotuloEl.textContent = `Fila ${fNum} (${filaArray.length})`;
+          rotuloEl.setAttribute('fill', '#334155');
         }
       }
 
-      // Aplica posição final
-      if (animar) {
-        g.style.transition = `transform ${this.duracaoChegada}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease`;
-      } else {
-        g.style.transition = 'none';
+      if (!ativa) {
+        // Se a fila não estiver ativa, não desenha pessoas
+        continue;
       }
 
-      g.setAttribute('transform', `translate(${pos.x}, ${pos.y})`);
-      g.style.opacity = '1';
-    }
+      // Cálculo de espaçamento e agrupamento +N
+      const totalPessoas = filaArray.length;
+      const compMax = this.obterComprimentoMaximoCaminho(fNum);
+      const espacoPadrao = 16;
+      let espacamento = espacoPadrao;
 
-    // 3. Indicador de Excedente (+N)
-    this.camadaIndicador.innerHTML = '';
-    if (excedente > 0) {
-      const ultPos = this.obterPosicaoSlot(visiveis.length - 1, visiveis.length, isRetrato);
-      const posIndicador = isRetrato
-        ? { x: ultPos.x, y: ultPos.y + 35 }
-        : { x: ultPos.x + 45, y: ultPos.y };
+      let maxCabem = Math.floor(compMax / espacamento);
+      if (totalPessoas > maxCabem) {
+        espacamento = Math.max(9, compMax / totalPessoas);
+        maxCabem = Math.floor(compMax / espacamento);
+      }
 
-      const gInd = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-      gInd.setAttribute('transform', `translate(${posIndicador.x}, ${posIndicador.y})`);
+      const precisaAgrupar = totalPessoas > maxCabem;
+      const qtdRenderizar = precisaAgrupar ? Math.max(1, maxCabem - 1) : totalPessoas;
 
-      const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-      rect.setAttribute('x', -24);
-      rect.setAttribute('y', -14);
-      rect.setAttribute('width', 48);
-      rect.setAttribute('height', 28);
-      rect.setAttribute('rx', 14);
-      rect.setAttribute('fill', 'var(--primary)');
+      for (let i = 0; i < qtdRenderizar; i++) {
+        const pNum = filaArray[i];
+        const dist = i * espacamento;
+        const pt = this.obterPontoNoCaminho(fNum, dist);
+        const ehCabeca = (i === 0);
 
-      const txt = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-      txt.setAttribute('class', 'pessoa-numero');
-      txt.textContent = `+${excedente}`;
+        this.desenharItemPessoa(fNum, pNum, pt, ehCabeca, fObj);
+      }
 
-      gInd.appendChild(rect);
-      gInd.appendChild(txt);
-      this.camadaIndicador.appendChild(gInd);
+      // Se houver excesso que exceda a capacidade visual, exibe o selo "+N"
+      if (precisaAgrupar) {
+        const excedente = totalPessoas - qtdRenderizar;
+        const distBadge = qtdRenderizar * espacamento;
+        const ptBadge = this.obterPontoNoCaminho(fNum, distBadge);
+        this.desenharBadgeMaisN(fNum, excedente, ptBadge);
+      }
     }
   }
 
-  /**
-   * Aplica operações atômicas recebidas pelo diff de estados.
-   * Se houver rajada (> 5 operações), atualiza diretamente para não engasgar a animação.
-   */
-  aplicarOperacoes(diff = [], estadoNovo) {
-    if (!this.habilitada) return;
-
-    if (diff.length > 5 || this.abaEmSegundoPlano) {
-      this.renderizarEstado(estadoNovo, false);
-      return;
+  desenharItemPessoa(filaNum, pessoaNum, pt, ehCabeca, fObj) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    g.setAttribute('class', 'item-pessoa');
+    if (ehCabeca) {
+      g.setAttribute('id', `cabeca_f${filaNum}`);
+      g.dataset.esperaMs = fObj?.esperaNaCabecaMs || 0;
     }
 
-    const isRetrato = this.container.clientHeight > this.container.clientWidth;
+    // Cores fiéis ao esboço:
+    // Fila 1: vermelho (#ef4444). Cabeça: verde (#22c55e) na catraca.
+    // Fila 2: verde (#22c55e). Cabeça: rosa (#ec4899) junto às mesas.
+    // Fila 3: rosa (#ec4899). Cabeça: laranja (#f97316) junto à saída.
+    let fillCor = '#ef4444';
+    let strokeCor = 'none';
+    let strokeW = '0';
 
-    for (const op of diff) {
-      if (op.op === 'confirmar') {
-        const no = this.camadaPessoas.querySelector(`[data-pessoa="${op.pessoa}"]`);
-        if (no) {
-          const posAtend = this.obterPosicaoAtendimento(isRetrato);
-          no.style.transition = `transform ${this.duracaoAtendimento}s cubic-bezier(0.2, 0.8, 0.2, 1), opacity ${this.duracaoAtendimento}s ease`;
-          no.setAttribute('transform', `translate(${posAtend.x}, ${posAtend.y})`);
-          no.style.opacity = '0';
-          setTimeout(() => no.remove(), this.duracaoAtendimento * 1000);
-        }
-      } else if (op.op === 'anular') {
-        const no = this.camadaPessoas.querySelector(`[data-pessoa="${op.pessoa}"]`);
-        if (no) {
-          no.style.transition = 'transform 0.4s ease, opacity 0.4s ease';
-          no.style.transform += ' scale(0.2)';
-          no.style.opacity = '0';
-          setTimeout(() => no.remove(), 400);
-        }
+    if (filaNum === 1) {
+      if (ehCabeca) {
+        fillCor = '#22c55e'; // Cabeça na catraca: verde
+        strokeCor = '#15803d';
+        strokeW = '2';
+      } else {
+        fillCor = '#ef4444'; // Demais: vermelho
+      }
+    } else if (filaNum === 2) {
+      if (ehCabeca) {
+        fillCor = '#ec4899'; // Cabeça junto às mesas: rosa
+        strokeCor = '#be185d';
+        strokeW = '2';
+      } else {
+        fillCor = '#22c55e'; // Demais: verde
+      }
+    } else if (filaNum === 3) {
+      if (ehCabeca) {
+        fillCor = '#f97316'; // Cabeça junto à saída: laranja
+        strokeCor = '#c2410c';
+        strokeW = '2';
+      } else {
+        fillCor = '#ec4899'; // Demais: rosa
       }
     }
 
-    // Sincroniza a posição da fila restante
-    setTimeout(() => {
-      this.renderizarEstado(estadoNovo, true);
-    }, 150);
+    // Se houver destaque de fila ativo (ex: tela do celular), atenua as outras
+    if (this.destaqueFila && this.destaqueFila !== filaNum) {
+      g.style.opacity = '0.35';
+    }
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', pt.x - pt.w / 2);
+    rect.setAttribute('y', pt.y - pt.h / 2);
+    rect.setAttribute('width', pt.w);
+    rect.setAttribute('height', pt.h);
+    rect.setAttribute('rx', '1.5');
+    rect.setAttribute('fill', fillCor);
+    if (strokeCor !== 'none') {
+      rect.setAttribute('stroke', strokeCor);
+      rect.setAttribute('stroke-width', strokeW);
+    }
+    g.appendChild(rect);
+
+    // Número da pessoa centralizado
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', pt.x);
+    text.setAttribute('y', pt.y + 3);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+    text.setAttribute('font-size', '8');
+    text.setAttribute('font-weight', 'bold');
+    text.setAttribute('fill', '#ffffff');
+    text.textContent = String(pessoaNum);
+    g.appendChild(text);
+
+    this.camadaPessoas.appendChild(g);
   }
 
-  verificarPulsoCatraca() {
-    if (!this.estadoAtual || !this.estadoAtual.primeiraDaFila) return;
-    const primeiraPessoa = this.estadoAtual.primeiraDaFila;
-    const no = this.camadaPessoas.querySelector(`[data-pessoa="${primeiraPessoa}"] circle`);
+  desenharBadgeMaisN(filaNum, excedente, pt) {
+    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    const badgeW = 32;
+    const badgeH = 16;
 
-    if (no) {
-      const espera = this.estadoAtual.esperaNaCatracaMs || 0;
-      if (espera >= 10000) {
-        no.classList.add('pulse');
-      } else {
-        no.classList.remove('pulse');
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', pt.x - badgeW / 2);
+    rect.setAttribute('y', pt.y - badgeH / 2);
+    rect.setAttribute('width', badgeW);
+    rect.setAttribute('height', badgeH);
+    rect.setAttribute('rx', '8');
+    rect.setAttribute('fill', '#475569');
+    g.appendChild(rect);
+
+    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    text.setAttribute('x', pt.x);
+    text.setAttribute('y', pt.y + 4);
+    text.setAttribute('text-anchor', 'middle');
+    text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+    text.setAttribute('font-size', '9');
+    text.setAttribute('font-weight', 'bold');
+    text.setAttribute('fill', '#ffffff');
+    text.textContent = `+${excedente}`;
+    g.appendChild(text);
+
+    this.camadaBadges.appendChild(g);
+  }
+
+  verificarPulsos() {
+    if (!this.estadoAtual || this.abaEmSegundoPlano) return;
+
+    for (const fNum of [1, 2, 3]) {
+      const cabecaEl = document.getElementById(`cabeca_f${fNum}`);
+      if (cabecaEl) {
+        const fo = this.estadoAtual.filas?.[fNum];
+        const esperaMs = fo?.esperaNaCabecaMs || 0;
+        if (esperaMs >= 10000) {
+          cabecaEl.classList.add('pulso-ativo');
+        } else {
+          cabecaEl.classList.remove('pulso-ativo');
+        }
       }
+    }
+  }
+
+  definirDestaqueFila(fNum) {
+    this.destaqueFila = fNum;
+    if (this.estadoAtual) {
+      this.renderizarEstado(this.estadoAtual);
     }
   }
 
   destruir() {
-    if (this.timerPulsoCatraca) {
-      clearInterval(this.timerPulsoCatraca);
-      this.timerPulsoCatraca = null;
-    }
-    if (this.container) {
-      this.container.innerHTML = '';
-    }
+    if (this.timerPulso) clearInterval(this.timerPulso);
   }
 }
-

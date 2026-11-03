@@ -1,7 +1,8 @@
 /**
  * server/server.js
  * Servidor HTTP nativo e WebSocket para coordenação colaborativa em tempo real.
- * Não utiliza Express; apenas os módulos nativos do Node.js e as bibliotecas 'ws' e 'qrcode'.
+ * Suporta até três filas ativas, encadeamento, reconexão transparente, cobertura por fila e auditoria.
+ * Dependências de produção estritamente: 'ws' e 'qrcode'. Sem Express, sem etapa de build.
  */
 
 import http from 'http';
@@ -102,7 +103,7 @@ const servidorHttp = http.createServer((req, res) => {
 /**
  * Trata requisições da API REST (Download de relatórios, CSV, listagem de sessões).
  */
-function tratarRequisicaoApi(req, res, pathname, urlParsed) {
+async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
   // CORS para a rede local
   res.setHeader('Access-Control-Allow-Origin', '*');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
@@ -114,25 +115,36 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
     return;
   }
 
-  // GET /api/info - Retorna dados de rede e PIN para o painel
+  // GET /api/info - Retorna dados de rede, PIN e QR codes para o painel
   if (pathname === '/api/info' && req.method === 'GET') {
     const rede = detectarEnderecosRede();
-    const urlCelular = `http://${rede.ipPreferido}:${PORTA}/celular.html`;
-    gerarQrCode(urlCelular).then(({ qrDataUrl }) => {
+    const urlCelularBase = `http://${rede.ipPreferido}:${PORTA}/celular.html`;
+
+    try {
+      const { qrDataUrl } = await gerarQrCode(urlCelularBase);
+      const qrFila1 = (await gerarQrCode(`${urlCelularBase}?fila=1`)).qrDataUrl;
+      const qrFila2 = (await gerarQrCode(`${urlCelularBase}?fila=2`)).qrDataUrl;
+      const qrFila3 = (await gerarQrCode(`${urlCelularBase}?fila=3`)).qrDataUrl;
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         ipPreferido: rede.ipPreferido,
         todasInterfaces: rede.todasInterfaces,
         porta: PORTA,
         pin: PIN_ACESSO,
-        urlCelular,
+        urlCelular: urlCelularBase,
         qrDataUrl,
+        qrFilas: {
+          1: qrFila1,
+          2: qrFila2,
+          3: qrFila3
+        },
         sessaoAtiva: gerenciadorSessoes.obterResumoSessaoAtiva()
       }));
-    }).catch(err => {
+    } catch (err) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ erro: err.message }));
-    });
+    }
     return;
   }
 
@@ -189,14 +201,17 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       return;
     }
 
+    const conexoesSessao = gerenciadorSessoes.obterConexoes(sessaoId);
+
     // GET /api/sessoes/:id (detalhes e métricas)
     if (!subAcao && req.method === 'GET') {
-      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs);
+      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs, conexoesSessao);
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         meta: dadosSessao.meta,
         eventos: dadosSessao.eventos,
         rejeitados: dadosSessao.rejeitados,
+        conexoes: conexoesSessao,
         metricas
       }));
       return;
@@ -208,14 +223,14 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
         'Content-Type': 'application/json',
         'Content-Disposition': `attachment; filename="${dadosSessao.meta.nome.replace(/\s+/g, '_')}_${sessaoId}.json"`
       });
-      res.end(JSON.stringify(dadosSessao, null, 2));
+      res.end(JSON.stringify({ ...dadosSessao, conexoes: conexoesSessao }, null, 2));
       return;
     }
 
     // GET /api/sessoes/:id/csv-pessoas
     if (subAcao === 'csv-pessoas' && req.method === 'GET') {
-      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs);
-      let csv = '\uFEFFPessoa;Horario_Chegada;Horario_Atendimento;Tempo_Espera_Seg;Intervalo_Atendimento_Seg;Status;Disp_Chegada;Disp_Atendimento\r\n';
+      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs, conexoesSessao);
+      let csv = '\uFEFFPessoa;Fila;Horario_Chegada;Horario_Atendimento;Tempo_Espera_Seg;Intervalo_Atendimento_Seg;Status;Ajuste;Encadeado;Disp_Chegada;Disp_Atendimento\r\n';
 
       for (const p of metricas.pessoas) {
         const chegadaStr = p.chegadaMs ? formatarHoraLocal(p.chegadaMs) : '';
@@ -223,7 +238,7 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
         const esperaSeg = p.esperaMs !== null ? formatarNumero(p.esperaMs / 1000, 2) : '';
         const intSeg = p.intervaloAtendimentoMs !== null ? formatarNumero(p.intervaloAtendimentoMs / 1000, 2) : '';
 
-        csv += `${p.pessoa};${chegadaStr};${atendStr};${esperaSeg};${intSeg};${p.status};${p.dispositivoChegada || ''};${p.dispositivoAtendimento || ''}\r\n`;
+        csv += `${p.pessoa};${p.fila || 1};${chegadaStr};${atendStr};${esperaSeg};${intSeg};${p.status};${p.ajuste ? 'SIM' : 'NAO'};${p.encadeado ? 'SIM' : 'NAO'};${p.dispositivoChegada || ''};${p.dispositivoAtendimento || ''}\r\n`;
       }
 
       res.writeHead(200, {
@@ -236,9 +251,9 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
 
     // GET /api/sessoes/:id/csv-eventos
     if (subAcao === 'csv-eventos' && req.method === 'GET') {
-      let csv = '\uFEFFSeq;Horario;Tipo;Pessoa;Dispositivo;Tardio;Texto\r\n';
+      let csv = '\uFEFFSeq;Horario;Tipo;Fila;Pessoa;Ajuste;Encadeado;Dispositivo;Tardio;Texto\r\n';
       for (const ev of dadosSessao.eventos) {
-        csv += `${ev.seq};${formatarHoraLocal(ev.t)};${ev.tipo};${ev.pessoa || ''};${ev.dispositivoNome || ''};${ev.tardio ? 'SIM' : 'NAO'};${ev.texto ? `"${ev.texto.replace(/"/g, '""')}"` : ''}\r\n`;
+        csv += `${ev.seq};${formatarHoraLocal(ev.t)};${ev.tipo};${ev.fila || 1};${ev.pessoa || ''};${ev.ajuste ? 'SIM' : 'NAO'};${ev.encadeado ? 'SIM' : 'NAO'};${ev.dispositivoNome || ''};${ev.tardio ? 'SIM' : 'NAO'};${ev.texto ? `"${ev.texto.replace(/"/g, '""')}"` : ''}\r\n`;
       }
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
@@ -248,41 +263,48 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       return;
     }
 
-    // GET /api/sessoes/:id/csv-metricas
-    if (subAcao === 'csv-metricas' && req.method === 'GET') {
-      const m = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs);
-      let csv = '\uFEFFMetrica;Valor;Unidade\r\n';
-      csv += `Nome da Sessao;${dadosSessao.meta.nome};\r\n`;
-      csv += `Local;${dadosSessao.meta.local};\r\n`;
-      csv += `Duracao Observada;${formatarDuracao(m.duracaoTotalMs)};HH:MM:SS\r\n`;
-      csv += `Duracao em Minutos;${formatarNumero(m.duracaoMin, 2)};min\r\n`;
-      csv += `Total de Chegadas;${m.n_chegadas};pessoas\r\n`;
-      csv += `Total de Atendidos;${m.n_atendimentos};pessoas\r\n`;
-      csv += `Total de Anulados;${m.n_anuladas};pessoas\r\n`;
-      csv += `Total de Revertidos;${m.n_revertidas};pessoas\r\n`;
-      csv += `Pessoas Restantes na Fila;${m.n_na_fila};pessoas\r\n`;
-      csv += `Taxa de Chegada (lambda);${formatarNumero(m.lambda, 4)};pessoas/min\r\n`;
-      csv += `Taxa de Servico (mu);${formatarNumero(m.muPorServidor, 4)};pessoas/min/servidor\r\n`;
-      csv += `Utilizacao do Sistema (rho);${formatarNumero(m.utilizacao * 100, 2)};%\r\n`;
-      csv += `Vazao Global;${formatarNumero(m.vazaoGlobalPorMin, 4)};pessoas/min\r\n`;
-      csv += `Vazao Operacional Efetiva;${formatarNumero(m.vazaoOperacionalPorMin, 4)};pessoas/min\r\n`;
-      csv += `Tempo de Espera Medio;${formatarNumero(m.statsEspera.media, 2)};seg\r\n`;
-      csv += `Tempo de Espera Mediano;${formatarNumero(m.statsEspera.mediana, 2)};seg\r\n`;
-      csv += `Tempo de Espera Desvio Padrao;${formatarNumero(m.statsEspera.desvioPadrao, 2)};seg\r\n`;
-      csv += `Tempo de Espera P90;${formatarNumero(m.statsEspera.p90, 2)};seg\r\n`;
-      csv += `Tempo de Espera P95;${formatarNumero(m.statsEspera.p95, 2)};seg\r\n`;
-      csv += `Intervalo Atendimentos Medio;${formatarNumero(m.statsIntervalosAtend.media, 2)};seg\r\n`;
-      csv += `Intervalo Atendimentos CV;${formatarNumero(m.statsIntervalosAtend.cv, 4)};\r\n`;
-      csv += `Comprimento Fila Medio Ponderado (L);${formatarNumero(m.filaTempo.mediaPonderada, 4)};pessoas\r\n`;
-      csv += `Pico Maximo da Fila;${m.filaTempo.max};pessoas\r\n`;
-      csv += `Lei de Little Produto lambda*W;${formatarNumero(m.little.L_calculado_lambda_W, 4)};pessoas\r\n`;
-      csv += `Lei de Little Diferenca Percentual;${formatarNumero(m.little.diffPerc, 2)};%\r\n`;
-      csv += `Tempo Total Ocioso;${formatarDuracao(m.ociosidade.tempoOciosoTotalMs)};HH:MM:SS\r\n`;
-      csv += `Percentual Ocioso;${formatarNumero(m.ociosidade.percentualOcioso, 2)};%\r\n`;
+    // GET /api/sessoes/:id/csv-resumo (uma linha por fila ativa, com cobertura)
+    if (subAcao === 'csv-resumo' && req.method === 'GET') {
+      const m = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs, conexoesSessao);
+      let csv = '\uFEFFFila;Nome_Fila;Status;Duracao_Min;Cobertura_Perc;Chegadas;Atendimentos;Anuladas;Revertidas;Na_Fila;Lambda_Por_Min;Mu_Por_Min;Utilizacao_Perc;Vazao_Global_Por_Min;Vazao_Operacional_Por_Min;Espera_Media_Seg;Espera_Mediana_Seg;Espera_P90_Seg;Espera_P95_Seg;Fila_Media_L;Pico_Fila;Little_Diff_Perc;Tempo_Servico_Parado_Seg;Tempo_Sem_Demanda_Seg;Tempo_Sem_Cobertura_Seg\r\n';
+
+      const nomesFilas = { 1: 'Fila 1 (Entrada->Catraca)', 2: 'Fila 2 (Catraca->Mesas)', 3: 'Fila 3 (Mesas->Saída)' };
+
+      for (const fNum of [1, 2, 3]) {
+        const mf = m.filas[fNum];
+        if (!mf || mf.semDados) continue; // Filas "sem dados" são omitidas do CSV de resumo
+
+        const statusStr = mf.desativadaEm ? 'Desativada durante a sessao' : 'Ativa';
+        const cobPerc = mf.cobertura?.disponivel ? formatarNumero(mf.cobertura.coberturaPerc, 1) : 'N/D';
+
+        csv += `${fNum};${nomesFilas[fNum]};${statusStr};${formatarNumero(mf.duracaoFilaMin, 2)};${cobPerc};${mf.n_chegadas};${mf.n_atendimentos};${mf.n_anuladas};${mf.n_revertidas};${mf.n_na_fila};${formatarNumero(mf.lambda, 4)};${formatarNumero(mf.muPorServidor, 4)};${formatarNumero(mf.utilizacao * 100, 2)};${formatarNumero(mf.vazaoGlobalPorMin, 4)};${formatarNumero(mf.vazaoOperacionalPorMin, 4)};${formatarNumero(mf.statsEspera.media, 2)};${formatarNumero(mf.statsEspera.mediana, 2)};${formatarNumero(mf.statsEspera.p90, 2)};${formatarNumero(mf.statsEspera.p95, 2)};${formatarNumero(mf.filaTempo.mediaPonderada, 2)};${mf.filaTempo.max};${formatarNumero(mf.little.diffPerc, 2)};${formatarNumero(mf.ociosidade.tempoServicoParadoMs / 1000, 1)};${formatarNumero(mf.ociosidade.tempoSemDemandaMs / 1000, 1)};${formatarNumero(mf.ociosidade.tempoSemCoberturaMs / 1000, 1)}\r\n`;
+      }
 
       res.writeHead(200, {
         'Content-Type': 'text/csv; charset=utf-8',
-        'Content-Disposition': `attachment; filename="metricas_${sessaoId}.csv"`
+        'Content-Disposition': `attachment; filename="resumo_${sessaoId}.csv"`
+      });
+      res.end(csv);
+      return;
+    }
+
+    // GET /api/sessoes/:id/csv-blocos
+    if (subAcao === 'csv-blocos' && req.method === 'GET') {
+      const m = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs, conexoesSessao);
+      let csv = '\uFEFFFila;Bloco_Indice;Rotulo;Horario_Inicio;Horario_Fim;Chegadas;Atendimentos;Vazao_Por_Min;Cobertura_Perc;Sem_Passagem\r\n';
+
+      for (const fNum of [1, 2, 3]) {
+        const mf = m.filas[fNum];
+        if (!mf || mf.semDados || !mf.vazaoBlocos) continue;
+
+        for (const b of mf.vazaoBlocos.blocos) {
+          csv += `${fNum};${b.indice};${b.rotulo};${formatarHoraLocal(b.tInicio)};${formatarHoraLocal(b.tFim)};${b.chegadas};${b.atendimentos};${formatarNumero(b.vazaoPorMin, 2)};${formatarNumero(b.coberturaPerc, 1)};${b.semPassagem ? 'SIM' : 'NAO'}\r\n`;
+        }
+      }
+
+      res.writeHead(200, {
+        'Content-Type': 'text/csv; charset=utf-8',
+        'Content-Disposition': `attachment; filename="blocos_${sessaoId}.csv"`
       });
       res.end(csv);
       return;
@@ -317,6 +339,11 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
           fs.writeFileSync(path.join(dirPath, 'rejeitados.jsonl'), linhasRejeitados, 'utf-8');
         }
 
+        if (dados.conexoes && dados.conexoes.length > 0) {
+          const linhasConexoes = dados.conexoes.map(c => JSON.stringify(c)).join('\n') + '\n';
+          fs.writeFileSync(path.join(dirPath, 'conexoes.jsonl'), linhasConexoes, 'utf-8');
+        }
+
         res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ sucesso: true, id: novoId }));
       } catch (err) {
@@ -336,13 +363,39 @@ function tratarRequisicaoApi(req, res, pathname, urlParsed) {
  */
 const wss = new WebSocketServer({ server: servidorHttp });
 
+// Batimento de aplicação do servidor a cada 10s para encerrar conexões zumbis
+const heartbeatInterval = setInterval(() => {
+  for (const [ws, disp] of conexoesAtivas.entries()) {
+    if (ws.isAlive === false) {
+      console.log(`[WS] Encerrando conexão zumbi de ${disp.nome} (${disp.id})`);
+      gerenciadorSessoes.registrarDesconexao(disp.id, disp.nome, 'ausencia_pong');
+      conexoesAtivas.delete(ws);
+      ws.terminate();
+      transmitirListaAparelhos();
+      continue;
+    }
+    ws.isAlive = false;
+    ws.ping();
+  }
+}, 10000);
+
+wss.on('close', () => {
+  clearInterval(heartbeatInterval);
+});
+
 wss.on('connection', (ws, req) => {
   const ipCliente = req.socket.remoteAddress;
+  ws.isAlive = true;
+
+  ws.on('pong', () => {
+    ws.isAlive = true;
+  });
 
   const infoDispositivo = {
     id: `disp_${Math.random().toString(36).substring(2, 9)}`,
     nome: 'Aparelho',
     papel: 'ambos',
+    area: '1',
     autenticado: false,
     conectado: true,
     ip: ipCliente,
@@ -365,6 +418,9 @@ wss.on('connection', (ws, req) => {
 
   ws.on('close', () => {
     infoDispositivo.conectado = false;
+    if (infoDispositivo.autenticado) {
+      gerenciadorSessoes.registrarDesconexao(infoDispositivo.id, infoDispositivo.nome, 'socket_fechado');
+    }
     conexoesAtivas.delete(ws);
     transmitirListaAparelhos();
   });
@@ -378,25 +434,27 @@ wss.on('connection', (ws, req) => {
  * Processamento das mensagens recebidas pelo WebSocket
  */
 function tratarMensagemWebSocket(ws, msg, dispositivo) {
-  // 1. Autenticação por PIN
+  // 1. Autenticação por PIN e Reconexão
   if (msg.tipo === 'autenticar') {
     const agora = Date.now();
-    const tentativa = tentativasPinPorIp.get(dispositivo.ip) || { contagem: 0, bloqueadoAte: 0 };
+    const pinRecebido = String(msg.pin).trim();
 
-    if (agora < tentativa.bloqueadoAte) {
-      const restanteSeg = Math.ceil((tentativa.bloqueadoAte - agora) / 1000);
-      ws.send(JSON.stringify({
-        tipo: 'autenticado',
-        sucesso: false,
-        mensagem: `Muitas tentativas incorretas. Tente novamente em ${restanteSeg} segundos.`
-      }));
-      return;
-    }
+    // Se o PIN estiver correto, NÃO bloqueia (permite reconexão legítima)
+    if (pinRecebido !== PIN_ACESSO) {
+      const tentativa = tentativasPinPorIp.get(dispositivo.ip) || { contagem: 0, bloqueadoAte: 0 };
+      if (agora < tentativa.bloqueadoAte) {
+        const restanteSeg = Math.ceil((tentativa.bloqueadoAte - agora) / 1000);
+        ws.send(JSON.stringify({
+          tipo: 'autenticado',
+          sucesso: false,
+          mensagem: `Muitas tentativas incorretas. Tente novamente em ${restanteSeg} segundos.`
+        }));
+        return;
+      }
 
-    if (String(msg.pin).trim() !== PIN_ACESSO) {
       tentativa.contagem++;
       if (tentativa.contagem >= 5) {
-        tentativa.bloqueadoAte = agora + 30000; // Bloqueio temporário de 30s
+        tentativa.bloqueadoAte = agora + 30000;
         tentativa.contagem = 0;
       }
       tentativasPinPorIp.set(dispositivo.ip, tentativa);
@@ -404,21 +462,41 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
       ws.send(JSON.stringify({
         tipo: 'autenticado',
         sucesso: false,
-        mensagem: 'PIN incorreto. Verifique o número exibido no painel do notebook.'
+        mensagem: 'PIN incorreto. Verifique o número no servidor.'
       }));
       return;
     }
 
-    // PIN Válido
+    // PIN Válido: limpa eventuais tentativas incorretas
     tentativasPinPorIp.delete(dispositivo.ip);
+
+    // Se já havia um socket antigo conectado para este mesmo dispositivoId, fecha o antigo
+    const dId = msg.dispositivoId || dispositivo.id;
+    for (const [outroWs, outroDisp] of conexoesAtivas.entries()) {
+      if (outroWs !== ws && outroDisp.id === dId) {
+        console.log(`[WS] Substituindo socket antigo do aparelho ${outroDisp.nome} (${dId})`);
+        conexoesAtivas.delete(outroWs);
+        outroWs.terminate();
+      }
+    }
+
     dispositivo.autenticado = true;
-    if (msg.dispositivoId) dispositivo.id = msg.dispositivoId;
+    dispositivo.id = dId;
     if (msg.dispositivoNome) dispositivo.nome = msg.dispositivoNome;
     if (msg.papel) dispositivo.papel = msg.papel;
+    if (msg.area) dispositivo.area = msg.area;
+
+    gerenciadorSessoes.registrarConexao(dispositivo.id, dispositivo.nome, dispositivo.area);
 
     const sessaoAtiva = gerenciadorSessoes.sessaoAtiva;
     const estado = sessaoAtiva ? sessaoAtiva.estadoAtual : null;
     const eventos = sessaoAtiva ? sessaoAtiva.eventos : [];
+
+    // Se o cliente informou o último seq que possui, envia os eventos faltantes
+    let eventosFaltantes = [];
+    if (msg.ultimoSeq !== undefined && sessaoAtiva) {
+      eventosFaltantes = sessaoAtiva.eventos.filter(e => e.seq > msg.ultimoSeq);
+    }
 
     ws.send(JSON.stringify({
       tipo: 'autenticado',
@@ -426,7 +504,8 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
       dispositivoId: dispositivo.id,
       sessao: gerenciadorSessoes.obterResumoSessaoAtiva(),
       estado,
-      eventos
+      eventos,
+      eventosFaltantes
     }));
 
     transmitirListaAparelhos();
@@ -456,12 +535,8 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
 
   // 3. Batimento cardíaco (Ping / Pong para latência)
   if (msg.tipo === 'ping') {
-    if (msg.latencia !== undefined) {
-      dispositivo.latenciaMs = msg.latencia;
-    }
-    if (msg.offsetRelogio !== undefined) {
-      dispositivo.offsetRelogioMs = msg.offsetRelogio;
-    }
+    if (msg.latencia !== undefined) dispositivo.latenciaMs = msg.latencia;
+    if (msg.offsetRelogio !== undefined) dispositivo.offsetRelogioMs = msg.offsetRelogio;
     ws.send(JSON.stringify({
       tipo: 'pong',
       tServidor: Date.now()
@@ -469,11 +544,72 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 4. Comandos de Coleta da Fila (chegada, atendido, anulacao, reversao, anotacao)
+  // 4. Mudança de área (seja solicitada pelo celular ou pelo painel)
+  if (msg.tipo === 'mudar_area') {
+    const alvoId = msg.dispositivoId || dispositivo.id;
+    const novaArea = msg.novaArea || msg.area || '1';
+
+    // Localiza o dispositivo nas conexões ativas
+    for (const [sck, disp] of conexoesAtivas.entries()) {
+      if (disp.id === alvoId) {
+        const areaAntiga = disp.area;
+        disp.area = novaArea;
+        gerenciadorSessoes.registrarMudancaArea(disp.id, disp.nome, areaAntiga, novaArea, dispositivo.nome);
+
+        // Notifica o próprio celular da mudança
+        sck.send(JSON.stringify({
+          tipo: 'area_atualizada',
+          area: novaArea
+        }));
+        break;
+      }
+    }
+
+    // Grava evento de auditoria atribuicao
+    const res = gerenciadorSessoes.processarComando({
+      acao: 'atribuicao',
+      dispositivoId: alvoId,
+      dispositivoNome: msg.dispositivoNome || dispositivo.nome,
+      area: novaArea
+    }, { id: dispositivo.id, nome: dispositivo.nome });
+
+    transmitirListaAparelhos();
+    return;
+  }
+
+  // 5. Desativação de fila durante a sessão
+  if (msg.tipo === 'desativar_fila') {
+    const autor = { id: dispositivo.id, nome: dispositivo.nome, area: dispositivo.area };
+    const res = gerenciadorSessoes.processarComando({
+      acao: 'desativar_fila',
+      fila: msg.fila
+    }, autor);
+
+    if (res.sucesso) {
+      transmitirParaTodos({
+        tipo: 'novo_evento',
+        evento: res.evento,
+        estado: res.estado,
+        diff: res.diff
+      });
+      transmitirListaAparelhos();
+    } else {
+      ws.send(JSON.stringify({
+        tipo: 'comando_resposta',
+        sucesso: false,
+        codigo: res.codigo,
+        mensagem: res.mensagem
+      }));
+    }
+    return;
+  }
+
+  // 6. Comandos de Coleta da Fila (chegada, atendido, anulacao, reversao, ajuste_fila, anotacao)
   if (msg.tipo === 'comando') {
     const autor = {
       id: dispositivo.id,
-      nome: dispositivo.nome
+      nome: dispositivo.nome,
+      area: dispositivo.area
     };
 
     const res = gerenciadorSessoes.processarComando(msg, autor, dispositivo.offsetRelogioMs);
@@ -487,16 +623,29 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
         tipo: 'comando_resposta',
         sucesso: true,
         clientEventId: res.clientEventId,
-        evento: res.evento
+        evento: res.evento,
+        eventos: res.eventos || (res.evento ? [res.evento] : [])
       }));
 
-      // Difusão do evento para todos os aparelhos conectados
-      transmitirParaTodos({
-        tipo: 'novo_evento',
-        evento: res.evento,
-        estado: res.estado,
-        diff: res.diff
-      });
+      // Difusão do evento (ou eventos de ajuste) para todos os aparelhos conectados
+      if (res.eventos && res.eventos.length > 0) {
+        for (const ev of res.eventos) {
+          transmitirParaTodos({
+            tipo: 'novo_evento',
+            evento: ev,
+            estado: res.estado,
+            diff: res.diff
+          });
+        }
+      } else if (res.evento) {
+        transmitirParaTodos({
+          tipo: 'novo_evento',
+          evento: res.evento,
+          eventoEncadeado: res.eventoEncadeado,
+          estado: res.estado,
+          diff: res.diff
+        });
+      }
 
       transmitirListaAparelhos();
     } else {
@@ -525,7 +674,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 5. Iniciar Sessão (pelo Painel)
+  // 7. Iniciar Sessão (pelo Painel)
   if (msg.tipo === 'iniciar_sessao') {
     try {
       const res = gerenciadorSessoes.iniciarSessao(msg.config, { id: dispositivo.id, nome: dispositivo.nome });
@@ -541,7 +690,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 6. Encerrar Sessão (pelo Painel)
+  // 8. Encerrar Sessão (pelo Painel)
   if (msg.tipo === 'encerrar_sessao') {
     try {
       const res = gerenciadorSessoes.encerrarSessao({ id: dispositivo.id, nome: dispositivo.nome });
@@ -557,9 +706,9 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     return;
   }
 
-  // 7. Simular Coleta de Teste
+  // 9. Simular Coleta de Teste
   if (msg.tipo === 'simular_teste') {
-    executarSimulacaoTeste(ws, msg.qtdEventos || 80);
+    executarSimulacaoTeste(ws, msg.qtdEventos || 60);
     return;
   }
 }
@@ -599,6 +748,7 @@ function transmitirListaAparelhos() {
         id: disp.id,
         nome: disp.nome,
         papel: disp.papel,
+        area: disp.area || '1',
         conectado: disp.conectado,
         latenciaMs: disp.latenciaMs,
         ultimoEventoMs: disp.ultimoEventoMs,
@@ -616,12 +766,13 @@ function transmitirListaAparelhos() {
 /**
  * Gera eventos sintéticos de teste para ensaio de carga e animação.
  */
-async function executarSimulacaoTeste(ws, total = 80) {
+async function executarSimulacaoTeste(ws, total = 60) {
   if (!gerenciadorSessoes.sessaoAtiva) {
     gerenciadorSessoes.iniciarSessao({
       nome: 'Coleta de Teste Sintética',
       local: 'RU - Simulação de Laboratório',
       observacoes: 'Sessão gerada automaticamente para teste de carga e animação.',
+      filasAtivas: [1, 2, 3],
       duracaoPrevistaMin: 60,
       servidores: 1,
       blocoMin: 5,
@@ -637,38 +788,53 @@ async function executarSimulacaoTeste(ws, total = 80) {
   }
 
   const autor = { id: 'simulador', nome: 'Robô de Teste' };
-  let chegadasRealizadas = 0;
+  const filasAtivas = gerenciadorSessoes.sessaoAtiva.config.filasAtivas || [1];
 
   for (let i = 0; i < total; i++) {
-    // Alterna entre chegadas e atendimentos
-    const deveChegar = Math.random() < 0.55 || gerenciadorSessoes.sessaoAtiva.estadoAtual.fila.length === 0;
+    // Escolhe uma fila ativa
+    const filaEscolhida = filasAtivas[Math.floor(Math.random() * filasAtivas.length)];
+    const filaObj = gerenciadorSessoes.sessaoAtiva.estadoAtual.filas[filaEscolhida];
+    const filaVazia = !filaObj || filaObj.fila.length === 0;
+
+    const deveChegar = Math.random() < 0.6 || filaVazia;
 
     if (deveChegar) {
-      chegadasRealizadas++;
-      const res = gerenciadorSessoes.processarComando({
-        acao: 'chegada',
-        clientEventId: `sim_cheg_${Date.now()}_${i}`
-      }, autor);
-
-      transmitirParaTodos({
-        tipo: 'novo_evento',
-        evento: res.evento,
-        estado: res.estado,
-        diff: res.diff
-      });
+      // Se Fila 2 estiver encadeada com Fila 1, chegada na Fila 2 vem da Fila 1
+      if (filaEscolhida === 2 && filasAtivas.includes(1)) {
+        // Gera chegada na Fila 1
+        const res = gerenciadorSessoes.processarComando({
+          acao: 'chegada',
+          fila: 1,
+          clientEventId: `sim_ch1_${Date.now()}_${i}`
+        }, autor);
+        if (res.sucesso) {
+          transmitirParaTodos({ tipo: 'novo_evento', evento: res.evento, estado: res.estado, diff: res.diff });
+        }
+      } else {
+        const res = gerenciadorSessoes.processarComando({
+          acao: 'chegada',
+          fila: filaEscolhida,
+          clientEventId: `sim_ch_${filaEscolhida}_${Date.now()}_${i}`
+        }, autor);
+        if (res.sucesso) {
+          transmitirParaTodos({ tipo: 'novo_evento', evento: res.evento, estado: res.estado, diff: res.diff });
+        }
+      }
     } else {
-      const fila = gerenciadorSessoes.sessaoAtiva.estadoAtual.fila;
-      if (fila.length > 0) {
+      if (filaObj && filaObj.fila.length > 0) {
+        const cabeca = filaObj.fila[0];
         const res = gerenciadorSessoes.processarComando({
           acao: 'atendido',
-          pessoaEsperada: fila[0],
-          clientEventId: `sim_atend_${Date.now()}_${i}`
+          fila: filaEscolhida,
+          pessoaEsperada: cabeca,
+          clientEventId: `sim_at_${filaEscolhida}_${Date.now()}_${i}`
         }, autor);
 
         if (res.sucesso) {
           transmitirParaTodos({
             tipo: 'novo_evento',
             evento: res.evento,
+            eventoEncadeado: res.eventoEncadeado,
             estado: res.estado,
             diff: res.diff
           });
@@ -676,7 +842,6 @@ async function executarSimulacaoTeste(ws, total = 80) {
       }
     }
 
-    // Pequeno intervalo entre ações simuladas
     await new Promise(r => setTimeout(r, 120));
   }
 }
@@ -690,7 +855,11 @@ servidorHttp.listen(PORTA, '0.0.0.0', async () => {
   const urlPainel = `http://localhost:${PORTA}/painel.html`;
   const urlHistorico = `http://localhost:${PORTA}/historico.html`;
 
-  const { qrTerminal } = await gerarQrCode(urlCelular);
+  let qrTerminal = '';
+  try {
+    const resQr = await gerarQrCode(urlCelular);
+    qrTerminal = resQr.qrTerminal;
+  } catch (e) {}
 
   console.log('\n================================================================');
   console.log('   SISTEMA COLABORATIVO DE COLETA DA FILA DO RU - SERVIDOR');
@@ -703,8 +872,10 @@ servidorHttp.listen(PORTA, '0.0.0.0', async () => {
   console.log(`    URL: ${urlPainel}`);
   console.log('  Histórico e Relatórios:');
   console.log(`    URL: ${urlHistorico}`);
-  console.log('\n----------------- QR CODE PARA OS CELULARES --------------------');
-  console.log(qrTerminal);
-  console.log('----------------------------------------------------------------');
+  if (qrTerminal) {
+    console.log('\n----------------- QR CODE PARA OS CELULARES --------------------');
+    console.log(qrTerminal);
+    console.log('----------------------------------------------------------------');
+  }
   console.log(`Servidor ouvindo em todas as interfaces na porta ${PORTA}.\n`);
 });

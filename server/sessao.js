@@ -1,6 +1,8 @@
 /**
  * server/sessao.js
- * Gerenciamento do ciclo de vida das sessões, persistência síncrona em JSON Lines e validação estrita de comandos.
+ * Gerenciamento do ciclo de vida das sessões, persistência síncrona em JSON Lines,
+ * suporte a até três filas ativas (Fila 1, Fila 2, Fila 3), encadeamento atômico,
+ * desativação de fila durante a sessão, ajuste de fila e registro de conexões/cobertura.
  */
 
 import fs from 'fs';
@@ -56,12 +58,15 @@ export class GerenciadorSessoes {
   carregarSessaoDeDisco(dirPath, meta) {
     const eventosPath = path.join(dirPath, 'eventos.jsonl');
     const rejeitadosPath = path.join(dirPath, 'rejeitados.jsonl');
+    const conexoesPath = path.join(dirPath, 'conexoes.jsonl');
+
     const linhas = fs.readFileSync(eventosPath, 'utf-8').split('\n').filter(l => l.trim().length > 0);
 
     const eventos = [];
     const clientEventIds = new Map(); // clientEventId -> evento
     let maxSeq = 0;
-    let maxPessoa = 0;
+    const maxPessoaPorFila = { 1: 0, 2: 0, 3: 0 };
+    const filasDesativadas = new Set();
 
     for (const linha of linhas) {
       try {
@@ -71,22 +76,38 @@ export class GerenciadorSessoes {
           clientEventIds.set(ev.clientEventId, ev);
         }
         if (ev.seq > maxSeq) maxSeq = ev.seq;
-        if (ev.pessoa && ev.pessoa > maxPessoa) maxPessoa = ev.pessoa;
+
+        const fNum = Number(ev.fila || 1);
+        if (ev.pessoa && ev.pessoa > (maxPessoaPorFila[fNum] || 0)) {
+          maxPessoaPorFila[fNum] = ev.pessoa;
+        }
+
+        if (ev.tipo === 'fila_desativada') {
+          filasDesativadas.add(Number(ev.fila || 1));
+        }
       } catch (e) {
         console.warn('[SESSAO] Linha malformada no log ignorada:', linha);
       }
     }
 
-    const estadoAtual = derivarEstado(eventos);
+    const config = meta.config || meta;
+    const estadoAtual = derivarEstado(eventos, Infinity, config);
 
     this.sessaoAtiva = {
       dirPath,
       eventosPath,
       rejeitadosPath,
+      conexoesPath,
       meta,
-      config: meta.config,
+      config,
+      filasAtivas: meta.filasAtivas || [1],
       seq: maxSeq,
-      proximaPessoa: maxPessoa + 1,
+      proximaPessoaPorFila: {
+        1: maxPessoaPorFila[1] + 1,
+        2: maxPessoaPorFila[2] + 1,
+        3: maxPessoaPorFila[3] + 1
+      },
+      filasDesativadas,
       eventos,
       clientEventIds,
       estadoAtual
@@ -96,7 +117,7 @@ export class GerenciadorSessoes {
   /**
    * Inicia uma nova sessão de observação.
    */
-  iniciarSessao(config, autor = { id: 'servidor', nome: 'Servidor' }) {
+  iniciarSessao(configOriginal, autor = { id: 'servidor', nome: 'Servidor' }) {
     if (this.sessaoAtiva) {
       throw new Error('Já existe uma sessão ativa. Encerre-a antes de iniciar outra.');
     }
@@ -109,7 +130,37 @@ export class GerenciadorSessoes {
 
     const eventosPath = path.join(dirPath, 'eventos.jsonl');
     const rejeitadosPath = path.join(dirPath, 'rejeitados.jsonl');
+    const conexoesPath = path.join(dirPath, 'conexoes.jsonl');
     const metaPath = path.join(dirPath, 'metadados.json');
+
+    // Normalização das opções de filas
+    const filasAtivas = Array.isArray(configOriginal.filasAtivas) && configOriginal.filasAtivas.length > 0
+      ? configOriginal.filasAtivas.map(Number)
+      : [1];
+
+    const rotulosFilas = {
+      1: { entrada: 'CHEGADA', saida: 'PASSOU NA CATRACA' },
+      2: { entrada: 'PASSOU NA CATRACA', saida: 'CHEGOU ÀS MESAS' },
+      3: { entrada: 'SAIU DAS MESAS', saida: 'PASSOU NA SAÍDA' },
+      ...(configOriginal.rotulosFilas || {})
+    };
+
+    const servidoresPorFila = {
+      1: 1,
+      2: 1,
+      3: 1,
+      ...(configOriginal.servidoresPorFila || {})
+    };
+    if (configOriginal.servidores) {
+      servidoresPorFila[1] = configOriginal.servidores;
+    }
+
+    const config = {
+      ...configOriginal,
+      filasAtivas,
+      rotulosFilas,
+      servidoresPorFila
+    };
 
     const meta = {
       id: dirNome,
@@ -117,7 +168,10 @@ export class GerenciadorSessoes {
       local: config.local || 'RU Central',
       observacoes: config.observacoes || '',
       duracaoPrevistaMin: config.duracaoPrevistaMin || 60,
-      servidores: config.servidores || 1,
+      servidores: servidoresPorFila[1] || 1,
+      servidoresPorFila,
+      rotulosFilas,
+      filasAtivas,
       blocoMin: config.blocoMin || 5,
       limiarPausaSeg: config.limiarPausaSeg || 60,
       teste: !!config.teste,
@@ -128,6 +182,7 @@ export class GerenciadorSessoes {
     };
 
     fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+    fs.writeFileSync(conexoesPath, '', 'utf-8'); // Inicializa conexões vazio
 
     const eventoInicio = {
       seq: 1,
@@ -146,13 +201,16 @@ export class GerenciadorSessoes {
       dirPath,
       eventosPath,
       rejeitadosPath,
+      conexoesPath,
       meta,
       config,
+      filasAtivas,
       seq: 1,
-      proximaPessoa: 1,
+      proximaPessoaPorFila: { 1: 1, 2: 1, 3: 1 },
+      filasDesativadas: new Set(),
       eventos: [eventoInicio],
       clientEventIds: new Map([[eventoInicio.clientEventId, eventoInicio]]),
-      estadoAtual: derivarEstado([eventoInicio])
+      estadoAtual: derivarEstado([eventoInicio], agora, config)
     };
 
     return {
@@ -160,6 +218,18 @@ export class GerenciadorSessoes {
       estado: this.sessaoAtiva.estadoAtual,
       sessao: meta
     };
+  }
+
+  /**
+   * Compatibilidade: getter para proximaPessoa da Fila 1.
+   */
+  get proximaPessoa() {
+    return this.sessaoAtiva ? this.sessaoAtiva.proximaPessoaPorFila[1] : 1;
+  }
+  set proximaPessoa(valor) {
+    if (this.sessaoAtiva) {
+      this.sessaoAtiva.proximaPessoaPorFila[1] = valor;
+    }
   }
 
   /**
@@ -192,7 +262,7 @@ export class GerenciadorSessoes {
     fs.writeFileSync(metaPath, JSON.stringify(this.sessaoAtiva.meta, null, 2), 'utf-8');
 
     const anterior = this.sessaoAtiva.estadoAtual;
-    const novo = derivarEstado(this.sessaoAtiva.eventos);
+    const novo = derivarEstado(this.sessaoAtiva.eventos, agora, this.sessaoAtiva.config);
     const diff = diffEstado(anterior, novo);
     this.sessaoAtiva.estadoAtual = novo;
 
@@ -208,8 +278,72 @@ export class GerenciadorSessoes {
   }
 
   /**
+   * Registra eventos de conexão e auditoria de aparelhos em conexoes.jsonl.
+   */
+  registrarConexao(dispId, dispNome, area = '1') {
+    if (!this.sessaoAtiva || !this.sessaoAtiva.conexoesPath) return;
+    const entrada = {
+      t: Date.now(),
+      tipo: 'conexao',
+      dispositivoId: dispId,
+      dispositivoNome: dispNome,
+      area
+    };
+    try {
+      fs.appendFileSync(this.sessaoAtiva.conexoesPath, JSON.stringify(entrada) + '\n', 'utf-8');
+    } catch (e) {}
+  }
+
+  registrarDesconexao(dispId, dispNome, causa = 'socket_close') {
+    if (!this.sessaoAtiva || !this.sessaoAtiva.conexoesPath) return;
+    const entrada = {
+      t: Date.now(),
+      tipo: 'desconexao',
+      dispositivoId: dispId,
+      dispositivoNome: dispNome,
+      causa
+    };
+    try {
+      fs.appendFileSync(this.sessaoAtiva.conexoesPath, JSON.stringify(entrada) + '\n', 'utf-8');
+    } catch (e) {}
+  }
+
+  registrarMudancaArea(dispId, dispNome, deArea, paraArea, autor = 'dispositivo') {
+    if (!this.sessaoAtiva || !this.sessaoAtiva.conexoesPath) return;
+    const entrada = {
+      t: Date.now(),
+      tipo: 'mudanca_area',
+      dispositivoId: dispId,
+      dispositivoNome: dispNome,
+      deArea,
+      paraArea,
+      autor
+    };
+    try {
+      fs.appendFileSync(this.sessaoAtiva.conexoesPath, JSON.stringify(entrada) + '\n', 'utf-8');
+    } catch (e) {}
+  }
+
+  obterConexoes(id = null) {
+    const caminho = id
+      ? path.join(DIR_DADOS, id, 'conexoes.jsonl')
+      : (this.sessaoAtiva?.conexoesPath);
+
+    if (!caminho || !fs.existsSync(caminho)) return [];
+    try {
+      return fs.readFileSync(caminho, 'utf-8')
+        .split('\n')
+        .filter(l => l.trim().length > 0)
+        .map(l => JSON.parse(l));
+    } catch (e) {
+      return [];
+    }
+  }
+
+  /**
    * Processa e valida comandos enviados por clientes WebSocket.
-   * Garante idempotência, ordem estrita e validação contra o estado atual.
+   * Suporta três filas, encadeamento atômico Fila 1 -> Fila 2, ajuste de fila,
+   * desativação de fila e validações estritas de permissão e estado.
    */
   processarComando(cmd, autor, offsetRelogio = 0) {
     if (!this.sessaoAtiva) {
@@ -242,28 +376,134 @@ export class GerenciadorSessoes {
       : (agoraServidor - 1);
     const tEvento = agoraServidor > ultimoT ? agoraServidor : (ultimoT + 1);
 
+    const filaNum = Number(cmd.fila || 1);
     const estadoAnterior = this.sessaoAtiva.estadoAtual;
+    const filasAtivas = this.sessaoAtiva.config.filasAtivas || [1];
+
+    // Trata comando especial: desativar_fila
+    if (cmd.acao === 'desativar_fila') {
+      if (!filasAtivas.includes(filaNum) || this.sessaoAtiva.filasDesativadas.has(filaNum)) {
+        this.registrarRejeicao(cmd, autor, 'FILA_INATIVA', `Fila ${filaNum} não está ativa.`);
+        return {
+          sucesso: false,
+          codigo: 'FILA_INATIVA',
+          mensagem: `A Fila ${filaNum} já está inativa ou desativada.`,
+          clientEventId: cmd.clientEventId
+        };
+      }
+
+      this.sessaoAtiva.filasDesativadas.add(filaNum);
+      this.sessaoAtiva.seq++;
+
+      const evDesativada = {
+        seq: this.sessaoAtiva.seq,
+        t: tEvento,
+        tipo: 'fila_desativada',
+        fila: filaNum,
+        dispositivoId: autor.id,
+        dispositivoNome: autor.nome,
+        clientEventId: cmd.clientEventId
+      };
+
+      fs.appendFileSync(this.sessaoAtiva.eventosPath, JSON.stringify(evDesativada) + '\n', 'utf-8');
+      this.sessaoAtiva.eventos.push(evDesativada);
+      if (cmd.clientEventId) this.sessaoAtiva.clientEventIds.set(cmd.clientEventId, evDesativada);
+
+      const novoEstado = derivarEstado(this.sessaoAtiva.eventos, Infinity, this.sessaoAtiva.config);
+      const diff = diffEstado(estadoAnterior, novoEstado);
+      this.sessaoAtiva.estadoAtual = novoEstado;
+
+      return {
+        sucesso: true,
+        evento: evDesativada,
+        estado: novoEstado,
+        diff,
+        clientEventId: cmd.clientEventId
+      };
+    }
+
+    // Trata comando especial: atribuicao de área de aparelho
+    if (cmd.acao === 'atribuicao') {
+      this.sessaoAtiva.seq++;
+      const evAtrib = {
+        seq: this.sessaoAtiva.seq,
+        t: tEvento,
+        tipo: 'atribuicao',
+        dispositivoId: cmd.dispositivoId || autor.id,
+        dispositivoNome: cmd.dispositivoNome || autor.nome,
+        area: cmd.area || 'apoio',
+        dispositivoIdAutor: autor.id,
+        clientEventId: cmd.clientEventId
+      };
+
+      fs.appendFileSync(this.sessaoAtiva.eventosPath, JSON.stringify(evAtrib) + '\n', 'utf-8');
+      this.sessaoAtiva.eventos.push(evAtrib);
+      if (cmd.clientEventId) this.sessaoAtiva.clientEventIds.set(cmd.clientEventId, evAtrib);
+
+      this.registrarMudancaArea(evAtrib.dispositivoId, evAtrib.dispositivoNome, autor.area, evAtrib.area, autor.nome);
+
+      return {
+        sucesso: true,
+        evento: evAtrib,
+        estado: this.sessaoAtiva.estadoAtual,
+        diff: [],
+        clientEventId: cmd.clientEventId
+      };
+    }
+
+    // Validação de Fila Ativa para comandos operacionais (chegada, atendido, anulacao, reversao, ajuste_fila)
+    if (cmd.acao !== 'anotacao') {
+      if (!filasAtivas.includes(filaNum) || this.sessaoAtiva.filasDesativadas.has(filaNum)) {
+        this.registrarRejeicao(cmd, autor, 'FILA_INATIVA', `A Fila ${filaNum} não está ativa nesta sessão.`);
+        return {
+          sucesso: false,
+          codigo: 'FILA_INATIVA',
+          mensagem: `A Fila ${filaNum} não foi selecionada nesta sessão ou já foi desativada.`,
+          clientEventId: cmd.clientEventId
+        };
+      }
+
+      // Validação de Modo Apoio: aparelhos em apoio não podem registrar eventos
+      if (autor.area === 'apoio' || autor.area === 'sem_area') {
+        this.registrarRejeicao(cmd, autor, 'APARELHO_EM_APOIO', 'Aparelho configurado em modo apoio (somente visualização).');
+        return {
+          sucesso: false,
+          codigo: 'APARELHO_EM_APOIO',
+          mensagem: 'Aparelho em modo apoio não possui permissão para registrar eventos na fila.',
+          clientEventId: cmd.clientEventId
+        };
+      }
+    }
+
+    const filaAlvoObj = estadoAnterior.filas[filaNum];
+    const filaArray = filaAlvoObj ? filaAlvoObj.fila : [];
+
     let eventoCriado = null;
+    let eventoEncadeado = null;
 
     switch (cmd.acao) {
       case 'chegada': {
-        const numPessoa = this.sessaoAtiva.proximaPessoa++;
+        const numPessoa = this.sessaoAtiva.proximaPessoaPorFila[filaNum]++;
         this.sessaoAtiva.seq++;
         eventoCriado = {
           seq: this.sessaoAtiva.seq,
           t: tEvento,
           tipo: 'chegada',
+          fila: filaNum,
           pessoa: numPessoa,
           dispositivoId: autor.id,
           dispositivoNome: autor.nome,
           clientEventId: cmd.clientEventId,
           tardio: ehTardio,
-          tCliente: cmd.tCliente || null
+          tCliente: cmd.tCliente || null,
+          ajuste: false,
+          encadeado: false
         };
         break;
       }
 
-      case 'atendido': {
+      case 'atendido':
+      case 'saida': {
         if (!cmd.pessoaEsperada) {
           this.registrarRejeicao(cmd, autor, 'CABECA_MUDOU', 'Comando sem pessoa esperada.');
           return {
@@ -274,8 +514,8 @@ export class GerenciadorSessoes {
           };
         }
 
-        if (estadoAnterior.fila.length === 0) {
-          this.registrarRejeicao(cmd, autor, 'FILA_VAZIA', 'Tentativa de atender com a fila vazia.');
+        if (filaArray.length === 0) {
+          this.registrarRejeicao(cmd, autor, 'FILA_VAZIA', `Tentativa de atender com a Fila ${filaNum} vazia.`);
           return {
             sucesso: false,
             codigo: 'FILA_VAZIA',
@@ -284,11 +524,11 @@ export class GerenciadorSessoes {
           };
         }
 
-        const pessoaNaCatraca = estadoAnterior.fila[0];
+        const pessoaNaCabeca = filaArray[0];
 
-        if (pessoaNaCatraca !== cmd.pessoaEsperada) {
+        if (pessoaNaCabeca !== cmd.pessoaEsperada) {
           // Identificar se a pessoa esperada já foi atendida, anulada ou se a cabeça mudou
-          const p = estadoAnterior.pessoas.find(x => x.pessoa === cmd.pessoaEsperada);
+          const p = estadoAnterior.pessoas.find(x => (x.fila || 1) === filaNum && x.pessoa === cmd.pessoaEsperada);
           if (p && p.status === 'atendida') {
             this.registrarRejeicao(cmd, autor, 'JA_ATENDIDO', `Pessoa ${cmd.pessoaEsperada} já foi confirmada anteriormente.`);
             return {
@@ -306,11 +546,11 @@ export class GerenciadorSessoes {
               clientEventId: cmd.clientEventId
             };
           } else {
-            this.registrarRejeicao(cmd, autor, 'CABECA_MUDOU', `Cabeça da fila mudou. Esperado: ${cmd.pessoaEsperada}, Atual: ${pessoaNaCatraca}`);
+            this.registrarRejeicao(cmd, autor, 'CABECA_MUDOU', `Cabeça da fila mudou. Esperado: ${cmd.pessoaEsperada}, Atual: ${pessoaNaCabeca}`);
             return {
               sucesso: false,
               codigo: 'CABECA_MUDOU',
-              mensagem: `A fila avançou! A pessoa atual na catraca é Pessoa ${pessoaNaCatraca}.`,
+              mensagem: `A fila avançou! A próxima pessoa da fila é Pessoa ${pessoaNaCabeca}.`,
               clientEventId: cmd.clientEventId
             };
           }
@@ -321,13 +561,35 @@ export class GerenciadorSessoes {
           seq: this.sessaoAtiva.seq,
           t: tEvento,
           tipo: 'atendimento',
-          pessoa: pessoaNaCatraca,
+          fila: filaNum,
+          pessoa: pessoaNaCabeca,
           dispositivoId: autor.id,
           dispositivoNome: autor.nome,
           clientEventId: cmd.clientEventId,
           tardio: ehTardio,
           tCliente: cmd.tCliente || null
         };
+
+        // Encadeamento atômico Fila 1 -> Fila 2
+        // Se as Filas 1 e 2 estiverem ativas, passar pela catraca gera chegada imediata na Fila 2
+        const fila2Ativa = filasAtivas.includes(2) && !this.sessaoAtiva.filasDesativadas.has(2);
+        if (filaNum === 1 && fila2Ativa) {
+          this.sessaoAtiva.seq++;
+          eventoEncadeado = {
+            seq: this.sessaoAtiva.seq,
+            t: tEvento,
+            tipo: 'chegada',
+            fila: 2,
+            pessoa: pessoaNaCabeca,
+            encadeado: true,
+            ajuste: false,
+            dispositivoId: autor.id,
+            dispositivoNome: autor.nome,
+            clientEventId: `${cmd.clientEventId || `cat_${pessoaNaCabeca}`}_chain`,
+            tardio: ehTardio,
+            tCliente: cmd.tCliente || null
+          };
+        }
         break;
       }
 
@@ -343,15 +605,15 @@ export class GerenciadorSessoes {
           };
         }
 
-        const naFila = estadoAnterior.fila.includes(pessoaId);
+        const naFila = filaArray.includes(pessoaId);
         if (!naFila) {
-          const p = estadoAnterior.pessoas.find(x => x.pessoa === pessoaId);
+          const p = estadoAnterior.pessoas.find(x => (x.fila || 1) === filaNum && x.pessoa === pessoaId);
           if (p && p.status === 'atendida') {
             this.registrarRejeicao(cmd, autor, 'JA_ATENDIDO', `Pessoa ${pessoaId} já foi atendida e não pode ser anulada.`);
             return {
               sucesso: false,
               codigo: 'JA_ATENDIDO',
-              mensagem: `Pessoa ${pessoaId} já foi atendida. Para cancelar, use Reverter Último Atendimento.`,
+              mensagem: `Pessoa ${pessoaId} já foi atendida nesta fila.`,
               clientEventId: cmd.clientEventId
             };
           } else if (p && p.status === 'anulada') {
@@ -363,7 +625,7 @@ export class GerenciadorSessoes {
               clientEventId: cmd.clientEventId
             };
           } else {
-            this.registrarRejeicao(cmd, autor, 'NAO_ENCONTRADO', `Pessoa ${pessoaId} não encontrada na fila.`);
+            this.registrarRejeicao(cmd, autor, 'NAO_ENCONTRADO', `Pessoa ${pessoaId} não encontrada na Fila ${filaNum}.`);
             return {
               sucesso: false,
               codigo: 'NAO_ENCONTRADO',
@@ -378,38 +640,59 @@ export class GerenciadorSessoes {
           seq: this.sessaoAtiva.seq,
           t: tEvento,
           tipo: 'anulacao',
+          fila: filaNum,
           pessoa: pessoaId,
           dispositivoId: autor.id,
           dispositivoNome: autor.nome,
           clientEventId: cmd.clientEventId,
           tardio: ehTardio,
-          tCliente: cmd.tCliente || null
+          tCliente: cmd.tCliente || null,
+          ajuste: false
         };
         break;
       }
 
       case 'reversao': {
-        // Encontrar a última pessoa com status "atendida"
-        const atendidos = estadoAnterior.pessoas.filter(p => p.status === 'atendida' && p.atendimentoMs !== null);
-        if (atendidos.length === 0) {
-          this.registrarRejeicao(cmd, autor, 'NADA_A_REVERTER', 'Nenhum atendimento realizado para reverter.');
+        // Encontra a última pessoa atendida na fila indicada
+        const atendidosFila = estadoAnterior.pessoas.filter(
+          p => (p.fila || 1) === filaNum && p.status === 'atendida' && p.atendimentoMs !== null
+        );
+
+        if (atendidosFila.length === 0) {
+          this.registrarRejeicao(cmd, autor, 'NADA_A_REVERTER', `Nenhum atendimento realizado na Fila ${filaNum} para reverter.`);
           return {
             sucesso: false,
             codigo: 'NADA_A_REVERTER',
-            mensagem: 'Nenhum atendimento anterior foi encontrado para ser desfeito.',
+            mensagem: 'Nenhum atendimento anterior foi encontrado nesta fila para ser desfeito.',
             clientEventId: cmd.clientEventId
           };
         }
 
-        // Pega a pessoa com o maior atendimentoMs
-        atendidos.sort((a, b) => b.atendimentoMs - a.atendimentoMs);
-        const ultimaAtendida = atendidos[0].pessoa;
+        atendidosFila.sort((a, b) => b.atendimentoMs - a.atendimentoMs);
+        const ultimaAtendida = atendidosFila[0].pessoa;
+
+        // Regra de encadeamento Fila 1 -> Fila 2:
+        // A reversão da catraca (Fila 1) só é aceita se a pessoa AINDA estiver na Fila 2!
+        const fila2Ativa = filasAtivas.includes(2) && !this.sessaoAtiva.filasDesativadas.has(2);
+        if (filaNum === 1 && fila2Ativa) {
+          const estaNaFila2 = estadoAnterior.filas[2]?.fila.includes(ultimaAtendida);
+          if (!estaNaFila2) {
+            this.registrarRejeicao(cmd, autor, 'PESSOA_JA_AVANCOU', `Pessoa ${ultimaAtendida} já avançou na Fila 2 e não pode ser revertida.`);
+            return {
+              sucesso: false,
+              codigo: 'PESSOA_JA_AVANCOU',
+              mensagem: `A Pessoa ${ultimaAtendida} já concluiu ou foi alterada na Fila 2 e não pode retornar à catraca.`,
+              clientEventId: cmd.clientEventId
+            };
+          }
+        }
 
         this.sessaoAtiva.seq++;
         eventoCriado = {
           seq: this.sessaoAtiva.seq,
           t: tEvento,
           tipo: 'reversao',
+          fila: filaNum,
           pessoa: ultimaAtendida,
           dispositivoId: autor.id,
           dispositivoNome: autor.nome,
@@ -420,12 +703,110 @@ export class GerenciadorSessoes {
         break;
       }
 
+      case 'ajuste_fila': {
+        const tamAtual = filaArray.length;
+        let qtdReal = tamAtual;
+        if (cmd.quantidadeReal !== undefined) {
+          qtdReal = Math.max(0, parseInt(cmd.quantidadeReal, 10) || 0);
+        } else if (cmd.delta !== undefined) {
+          qtdReal = Math.max(0, tamAtual + (parseInt(cmd.delta, 10) || 0));
+        }
+
+        const deltaCalculado = qtdReal - tamAtual;
+
+        if (qtdReal === tamAtual) {
+          return {
+            sucesso: true,
+            ajuste: true,
+            delta: 0,
+            tamanhoApos: qtdReal,
+            mensagem: `Fila ${filaNum} já possui exatamente ${qtdReal} pessoas.`,
+            evento: { tipo: 'ajuste_fila', fila: filaNum, delta: 0, tamanhoApos: qtdReal },
+            eventos: [],
+            estado: estadoAnterior,
+            diff: [],
+            clientEventId: cmd.clientEventId
+          };
+        }
+
+        const eventosAjuste = [];
+
+        if (qtdReal < tamAtual) {
+          // Quantidade real é menor: anular pessoas da cabeça da fila
+          const diffQtd = tamAtual - qtdReal;
+          const pessoasRemover = filaArray.slice(0, diffQtd);
+
+          for (const pId of pessoasRemover) {
+            this.sessaoAtiva.seq++;
+            const evAnul = {
+              seq: this.sessaoAtiva.seq,
+              t: tEvento,
+              tipo: 'anulacao',
+              fila: filaNum,
+              pessoa: pId,
+              ajuste: true,
+              dispositivoId: autor.id,
+              dispositivoNome: autor.nome,
+              clientEventId: `${cmd.clientEventId || 'ajuste'}_anul_${pId}`,
+              tardio: false
+            };
+            eventosAjuste.push(evAnul);
+          }
+        } else {
+          // Quantidade real é maior: acrescentar pessoas na cauda da fila
+          const diffQtd = qtdReal - tamAtual;
+
+          for (let i = 0; i < diffQtd; i++) {
+            const numPessoa = this.sessaoAtiva.proximaPessoaPorFila[filaNum]++;
+            this.sessaoAtiva.seq++;
+            const evCheg = {
+              seq: this.sessaoAtiva.seq,
+              t: tEvento,
+              tipo: 'chegada',
+              fila: filaNum,
+              pessoa: numPessoa,
+              ajuste: true,
+              encadeado: false,
+              dispositivoId: autor.id,
+              dispositivoNome: autor.nome,
+              clientEventId: `${cmd.clientEventId || 'ajuste'}_cheg_${numPessoa}`,
+              tardio: false
+            };
+            eventosAjuste.push(evCheg);
+          }
+        }
+
+        // Persistência síncrona dos eventos de ajuste
+        for (const ev of eventosAjuste) {
+          fs.appendFileSync(this.sessaoAtiva.eventosPath, JSON.stringify(ev) + '\n', 'utf-8');
+          this.sessaoAtiva.eventos.push(ev);
+          if (ev.clientEventId) this.sessaoAtiva.clientEventIds.set(ev.clientEventId, ev);
+        }
+
+        const estadoNovo = derivarEstado(this.sessaoAtiva.eventos, Infinity, this.sessaoAtiva.config);
+        const diff = diffEstado(estadoAnterior, estadoNovo);
+        this.sessaoAtiva.estadoAtual = estadoNovo;
+
+        return {
+          sucesso: true,
+          ajuste: true,
+          delta: deltaCalculado,
+          tamanhoApos: qtdReal,
+          evento: eventosAjuste[0] || null,
+          eventos: eventosAjuste,
+          estado: estadoNovo,
+          diff,
+          clientEventId: cmd.clientEventId
+        };
+      }
+
       case 'anotacao': {
         this.sessaoAtiva.seq++;
         eventoCriado = {
           seq: this.sessaoAtiva.seq,
           t: tEvento,
           tipo: 'anotacao',
+          fila: cmd.fila ? Number(cmd.fila) : null,
           texto: String(cmd.texto || '').trim().substring(0, 200),
           dispositivoId: autor.id,
           dispositivoNome: autor.nome,
@@ -453,13 +834,23 @@ export class GerenciadorSessoes {
       this.sessaoAtiva.clientEventIds.set(eventoCriado.clientEventId, eventoCriado);
     }
 
-    const estadoNovo = derivarEstado(this.sessaoAtiva.eventos);
+    if (eventoEncadeado) {
+      fs.appendFileSync(this.sessaoAtiva.eventosPath, JSON.stringify(eventoEncadeado) + '\n', 'utf-8');
+      this.sessaoAtiva.eventos.push(eventoEncadeado);
+      if (eventoEncadeado.clientEventId) {
+        this.sessaoAtiva.clientEventIds.set(eventoEncadeado.clientEventId, eventoEncadeado);
+      }
+    }
+
+    const estadoNovo = derivarEstado(this.sessaoAtiva.eventos, Infinity, this.sessaoAtiva.config);
     const diff = diffEstado(estadoAnterior, estadoNovo);
     this.sessaoAtiva.estadoAtual = estadoNovo;
 
     return {
       sucesso: true,
       evento: eventoCriado,
+      eventoEncadeado,
+      eventosGerados: eventoEncadeado ? [eventoCriado, eventoEncadeado] : [eventoCriado],
       estado: estadoNovo,
       diff,
       clientEventId: cmd.clientEventId
@@ -472,6 +863,7 @@ export class GerenciadorSessoes {
       t: Date.now(),
       codigo,
       mensagem,
+      fila: cmd?.fila || null,
       comando: cmd,
       dispositivoId: autor.id,
       dispositivoNome: autor.nome
@@ -492,6 +884,10 @@ export class GerenciadorSessoes {
       observacoes: this.sessaoAtiva.meta.observacoes,
       duracaoPrevistaMin: this.sessaoAtiva.meta.duracaoPrevistaMin,
       servidores: this.sessaoAtiva.meta.servidores,
+      servidoresPorFila: this.sessaoAtiva.meta.servidoresPorFila,
+      rotulosFilas: this.sessaoAtiva.meta.rotulosFilas,
+      filasAtivas: this.sessaoAtiva.meta.filasAtivas,
+      filasDesativadas: Array.from(this.sessaoAtiva.filasDesativadas),
       blocoMin: this.sessaoAtiva.meta.blocoMin,
       limiarPausaSeg: this.sessaoAtiva.meta.limiarPausaSeg,
       teste: this.sessaoAtiva.meta.teste,
@@ -538,6 +934,7 @@ export class GerenciadorSessoes {
     const metaPath = path.join(dirPath, 'metadados.json');
     const eventosPath = path.join(dirPath, 'eventos.jsonl');
     const rejeitadosPath = path.join(dirPath, 'rejeitados.jsonl');
+    const conexoesPath = path.join(dirPath, 'conexoes.jsonl');
 
     if (!fs.existsSync(metaPath) || !fs.existsSync(eventosPath)) {
       return null;
@@ -557,10 +954,19 @@ export class GerenciadorSessoes {
         .map(l => JSON.parse(l));
     }
 
+    let conexoes = [];
+    if (fs.existsSync(conexoesPath)) {
+      conexoes = fs.readFileSync(conexoesPath, 'utf-8')
+        .split('\n')
+        .filter(l => l.trim().length > 0)
+        .map(l => JSON.parse(l));
+    }
+
     return {
       meta,
       eventos,
-      rejeitados
+      rejeitados,
+      conexoes
     };
   }
 

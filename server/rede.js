@@ -4,7 +4,14 @@
  */
 
 import os from 'os';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
 import qrcode from 'qrcode';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const ARQUIVO_CONFIG = path.resolve(__dirname, '..', 'config.json');
 
 /**
  * Obtém a lista de endereços IPv4 da máquina e identifica o IP preferido (Hotspot).
@@ -46,7 +53,12 @@ export function detectarEnderecosRede() {
 }
 
 /**
- * Gera ou obtém o PIN de 4 dígitos da linha de comando (--pin XXXX).
+ * Obtém o PIN de 4 dígitos.
+ * Ordem de precedência:
+ * 1. Linha de comando (--pin XXXX)
+ * 2. Variável de ambiente (FILA_PIN)
+ * 3. Arquivo config.json ({ "pin": "XXXX" })
+ * 4. Padrão fixo "1234" (nunca aleatório).
  * @returns {string} PIN de 4 dígitos
  */
 export function obterOuGerarPin() {
@@ -58,9 +70,24 @@ export function obterOuGerarPin() {
       return pinCustom;
     }
   }
-  // Gera PIN aleatório de 4 dígitos entre 1000 e 9999
-  const pinAleatorio = Math.floor(1000 + Math.random() * 9000);
-  return String(pinAleatorio);
+
+  if (process.env.FILA_PIN && /^\d{4}$/.test(process.env.FILA_PIN.trim())) {
+    return process.env.FILA_PIN.trim();
+  }
+
+  try {
+    if (fs.existsSync(ARQUIVO_CONFIG)) {
+      const cfg = JSON.parse(fs.readFileSync(ARQUIVO_CONFIG, 'utf-8'));
+      if (cfg && cfg.pin && /^\d{4}$/.test(String(cfg.pin).trim())) {
+        return String(cfg.pin).trim();
+      }
+    }
+  } catch (e) {
+    console.warn('[REDE] Erro ao ler config.json:', e);
+  }
+
+  // Padrão fixo da especificação
+  return '1234';
 }
 
 /**
