@@ -22,6 +22,8 @@ const PainelApp = {
   timerHud: null,
   infoServidor: null,
   qrTabAtual: 'geral',
+  statusConexaoAtual: 'desconectado',
+  ultimaAtualizacaoTempo: Date.now(),
 
   async init() {
     this.animador = new AnimadorFila('container-animacao-painel');
@@ -29,13 +31,16 @@ const PainelApp = {
     await this.carregarInfoServidor();
 
     this.conexao = new GerenciadorConexao({
+      papel: 'painel',
       onEstado: (estado, sessao) => {
         this.sessao = sessao;
+        this.ultimaAtualizacaoTempo = Date.now();
         this.atualizarEstado(estado);
         if (this.animador) this.animador.renderizarEstado(estado, false);
       },
       onNovoEvento: (evento, estado, diff) => {
         this.eventos.unshift(evento);
+        this.ultimaAtualizacaoTempo = Date.now();
         this.atualizarEstado(estado);
         if (this.animador) this.animador.aplicarOperacoes(diff, estado);
         this.renderizarTabelaEventos();
@@ -120,16 +125,28 @@ const PainelApp = {
   },
 
   atualizarStatusConexao(status) {
+    this.statusConexaoAtual = status;
     const badge = document.getElementById('badge-conexao');
     const txt = document.getElementById('txt-conexao');
+    if (!badge || !txt) return;
+
     badge.className = 'status-badge';
 
     if (status === 'conectado') {
       badge.classList.add('online');
-      txt.textContent = 'Servidor Conectado';
+      txt.textContent = 'Ao vivo';
+      this.ultimaAtualizacaoTempo = Date.now();
+    } else if (status === 'reconectando') {
+      badge.classList.add('reconectando');
+      txt.textContent = 'Reconectando…';
+    } else if (status === 'polling') {
+      badge.classList.add('polling');
+      const seg = Math.max(0, Math.round((Date.now() - this.ultimaAtualizacaoTempo) / 1000));
+      txt.textContent = `Sem conexão, atualizando por consulta (há ${seg} s)`;
     } else {
       badge.classList.add('offline');
-      txt.textContent = 'Desconectado';
+      const seg = Math.max(0, Math.round((Date.now() - this.ultimaAtualizacaoTempo) / 1000));
+      txt.textContent = `Sem conexão, atualizando por consulta (há ${seg} s)`;
     }
   },
 
@@ -310,6 +327,14 @@ const PainelApp = {
     } else {
       boxAlerta.style.display = 'none';
       this.ultimoAtendimentoTempo = agora;
+    }
+
+    if (this.statusConexaoAtual === 'polling' || this.statusConexaoAtual === 'desconectado') {
+      const seg = Math.max(0, Math.round((agora - this.ultimaAtualizacaoTempo) / 1000));
+      const txt = document.getElementById('txt-conexao');
+      if (txt) {
+        txt.textContent = `Sem conexão, atualizando por consulta (há ${seg} s)`;
+      }
     }
   },
 
@@ -534,6 +559,146 @@ const PainelApp = {
       tipo: 'simular_teste',
       qtdEventos: 80
     });
+  },
+
+  ajustarMapa() {
+    if (this.animador) this.animador.alternarAjustarTela();
+  },
+
+  telaCheiaMapa() {
+    if (this.animador) this.animador.alternarTelaCheia();
+  },
+
+  async abrirModalPin() {
+    const modal = document.getElementById('modal-config-pin');
+    const erroEl = document.getElementById('pin-feedback-erro');
+    const sucessoEl = document.getElementById('pin-feedback-sucesso');
+    const avisoFixo = document.getElementById('pin-aviso-fixo');
+    const pinAtual = document.getElementById('pin-atual');
+    const pinNovo = document.getElementById('pin-novo');
+    const pinConfirma = document.getElementById('pin-confirma');
+    const btnSalvar = document.getElementById('btn-salvar-pin');
+    const btnRestaurar = document.getElementById('btn-restaurar-pin');
+    const chkDesconectar = document.getElementById('chk-desconectar-aparelhos');
+
+    erroEl.style.display = 'none';
+    sucessoEl.style.display = 'none';
+    pinNovo.value = '';
+    pinConfirma.value = '';
+    chkDesconectar.checked = false;
+
+    try {
+      const resp = await fetch('/api/config/pin');
+      if (resp.status === 403) {
+        erroEl.textContent = 'Acesso restrito ao computador local (notebook).';
+        erroEl.style.display = 'block';
+        return;
+      }
+      const data = await resp.json();
+      pinAtual.value = data.pin || '****';
+      if (data.fixoPorParametro) {
+        avisoFixo.style.display = 'block';
+        pinNovo.disabled = true;
+        pinConfirma.disabled = true;
+        btnSalvar.disabled = true;
+        btnRestaurar.disabled = true;
+        chkDesconectar.disabled = true;
+      } else {
+        avisoFixo.style.display = 'none';
+        pinNovo.disabled = false;
+        pinConfirma.disabled = false;
+        btnSalvar.disabled = false;
+        btnRestaurar.disabled = false;
+        chkDesconectar.disabled = false;
+      }
+    } catch (e) {
+      pinAtual.value = (this.infoServidor && this.infoServidor.pin) || '1234';
+    }
+
+    modal.classList.add('open');
+  },
+
+  fecharModalPin() {
+    const modal = document.getElementById('modal-config-pin');
+    if (modal) modal.classList.remove('open');
+  },
+
+  toggleVerPin(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.type = el.type === 'password' ? 'text' : 'password';
+  },
+
+  restaurarPinPadrao() {
+    document.getElementById('pin-novo').value = '1234';
+    document.getElementById('pin-confirma').value = '1234';
+  },
+
+  async salvarNovoPin() {
+    const erroEl = document.getElementById('pin-feedback-erro');
+    const sucessoEl = document.getElementById('pin-feedback-sucesso');
+    const pinAtual = document.getElementById('pin-atual').value;
+    const pinNovo = document.getElementById('pin-novo').value.trim();
+    const pinConfirma = document.getElementById('pin-confirma').value.trim();
+    const desconectarOutros = document.getElementById('chk-desconectar-aparelhos').checked;
+
+    erroEl.style.display = 'none';
+    sucessoEl.style.display = 'none';
+
+    if (!pinNovo || !pinConfirma) {
+      erroEl.textContent = 'Por favor, preencha todos os campos.';
+      erroEl.style.display = 'block';
+      return;
+    }
+
+    if (!/^\d{4,8}$/.test(pinNovo)) {
+      erroEl.textContent = 'A nova senha deve ter entre 4 e 8 dígitos numéricos.';
+      erroEl.style.display = 'block';
+      return;
+    }
+
+    if (pinNovo !== pinConfirma) {
+      erroEl.textContent = 'A confirmação não coincide com a nova senha.';
+      erroEl.style.display = 'block';
+      return;
+    }
+
+    if (pinAtual && pinNovo === pinAtual) {
+      erroEl.textContent = 'A nova senha deve ser diferente da senha atual.';
+      erroEl.style.display = 'block';
+      return;
+    }
+
+    if (!confirm(`Confirma a alteração da senha de acesso para "${pinNovo}"?`)) {
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/config/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ novoPin: pinNovo, desconectarOutros })
+      });
+
+      const res = await resp.json();
+      if (!resp.ok || !res.sucesso) {
+        erroEl.textContent = res.erro || 'Falha ao alterar senha no servidor.';
+        erroEl.style.display = 'block';
+        return;
+      }
+
+      sucessoEl.textContent = 'Senha atualizada com sucesso!';
+      sucessoEl.style.display = 'block';
+      document.getElementById('txt-pin-display').textContent = pinNovo;
+      if (this.conexao) this.conexao.salvarCredenciais(pinNovo, 'Painel Notebook', 'todas');
+
+      setTimeout(() => {
+        this.fecharModalPin();
+      }, 1200);
+    } catch (e) {
+      erroEl.textContent = 'Erro ao conectar ao servidor para alterar senha.';
+      erroEl.style.display = 'block';
+    }
   },
 
   toggleTheme() {

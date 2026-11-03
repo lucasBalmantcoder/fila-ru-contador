@@ -1,21 +1,69 @@
 /**
  * public/animacao.js
  * Renderizador de animação fiel da fila em SVG, seguindo rigorosamente o esboço visual
- * do Restaurante Universitário com viewBox="0 0 960 660".
- * Suporta as três filas (Fila 1 vermelho, Fila 2 verde, Fila 3 rosa), cabeças com cores
- * do estágio seguinte (verde, rosa, laranja), caixas com contadores, pulso > 10s,
- * setas direcionais, agrupamento +N e indicação de filas desativadas / sem coleta.
+ * do Restaurante Universitário.
+ * O viewBox é calculado deterministicamente a partir da geometria estática do layout.
+ * O contêiner usa aspect-ratio com overflow: hidden e isolation: isolate, garantindo
+ * que o mapa nunca ultrapasse seus limites nem sobreponha outros blocos.
  */
+
+/**
+ * Calcula os limites e viewBox a partir da geometria estática invariante do layout
+ * (caixas físicas, setas direcionais, rótulos e percursos completos das filas).
+ * @returns {Object} { minX, minY, largura, altura, aspectRatio, viewBoxStr }
+ */
+export function calcularViewBoxEstatico() {
+  // Geometria estática invariante:
+  // Caixas:
+  // - catraca: [527, 173] a [622, 258]
+  // - atendimento: [390, 221] a [465, 363]
+  // - mesas: [123, 172] a [222, 258]
+  // - saida: [123, 462] a [222, 548]
+  // Setas:
+  // - Seta F1 vert: (820, 70..180)
+  // - Seta F1 horiz: (650..770, 270)
+  // - Seta F2 descendo: (545, 250..360)
+  // - Seta F2 horiz baixo: (370..490, 420)
+  // - Seta F2 subindo: (305, 240..360)
+  // - Seta F2 horiz topo: (240..350, 165)
+  // - Seta F3 descendo: (85, 300..410)
+  // Percursos e limites de cabeças/badges:
+  // - F1 topo e badge +N: x=766, y=20..40
+  // - F2 percurso: x de 228 (cabeça mesas) a 515, y de 205 a 390
+  // - F3 percurso: x de 160 a 190, y de 265 a 455
+  // Rótulos:
+  // - F1: (700, 185)
+  // - F2: (427, 185)
+  // - F3: (135, 350)
+  const minX = 65;
+  const minY = 15;
+  const maxX = 845;
+  const maxY = 565;
+  const largura = maxX - minX;
+  const altura = maxY - minY;
+
+  return {
+    minX,
+    minY,
+    largura,
+    altura,
+    aspectRatio: largura / altura,
+    viewBoxStr: `${minX} ${minY} ${largura} ${altura}`
+  };
+}
 
 export class AnimadorFila {
   constructor(containerId, opcoes = {}) {
     this.container = typeof containerId === 'string' ? document.getElementById(containerId) : containerId;
     this.habilitada = true;
     this.destaqueFila = opcoes.destaqueFila || null; // 1, 2, 3 ou null (todas)
+    this.maxHeight = opcoes.maxHeight || null;
 
     this.estadoAtual = null;
     this.abaEmSegundoPlano = false;
     this.timerPulso = null;
+    this.resizeObserver = null;
+    this.modoAjustado = false;
 
     this.svg = null;
     this.camadaFundo = null;
@@ -32,15 +80,31 @@ export class AnimadorFila {
     if (!this.container) return;
     this.container.innerHTML = '';
 
-    // Elemento SVG com layout fixo viewBox 0 0 960 660 conforme o esboço
+    const geom = calcularViewBoxEstatico();
+
+    // Configuração de estilo do contêiner para aspect-ratio e contenção rígida
+    this.container.style.aspectRatio = `${geom.largura} / ${geom.altura}`;
+    this.container.style.width = '100%';
+    this.container.style.height = 'auto';
+    this.container.style.overflow = 'hidden';
+    this.container.style.isolation = 'isolate';
+    this.container.style.position = 'relative';
+
+    if (this.maxHeight) {
+      this.container.style.maxHeight = this.maxHeight;
+    } else {
+      this.container.style.maxHeight = 'calc(100vh - 280px)';
+    }
+
+    // Elemento SVG com viewBox derivado da geometria estática
     this.svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     this.svg.setAttribute('class', 'fila-svg');
-    this.svg.setAttribute('viewBox', '0 0 960 660');
+    this.svg.setAttribute('viewBox', geom.viewBoxStr);
     this.svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
     this.svg.style.width = '100%';
-    this.svg.style.height = 'auto';
-    this.svg.style.maxHeight = '80vh';
+    this.svg.style.height = '100%';
     this.svg.style.display = 'block';
+    this.svg.style.pointerEvents = 'none'; // Não captura cliques
 
     // Definição de marcadores para as setas pretas
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -79,6 +143,14 @@ export class AnimadorFila {
 
     this.desenharEstruturaEstatica();
 
+    // ResizeObserver para recalcular e adaptar dimensões em redimensionamento, rotação e zoom
+    if (typeof ResizeObserver !== 'undefined') {
+      this.resizeObserver = new ResizeObserver(() => {
+        this.ajustarDimensoes();
+      });
+      this.resizeObserver.observe(this.container);
+    }
+
     // Tratamento de visibilidade de aba
     document.addEventListener('visibilitychange', () => {
       this.abaEmSegundoPlano = document.hidden;
@@ -93,37 +165,55 @@ export class AnimadorFila {
     }, 1000);
   }
 
+  ajustarDimensoes() {
+    if (!this.container || !this.svg) return;
+    // Garante que o aspecto e limites se mantenham consistentes
+    const geom = calcularViewBoxEstatico();
+    this.svg.setAttribute('viewBox', geom.viewBoxStr);
+  }
+
+  alternarAjustarTela() {
+    this.modoAjustado = !this.modoAjustado;
+    if (this.modoAjustado) {
+      this.container.style.maxHeight = 'calc(100vh - 220px)';
+    } else {
+      this.container.style.maxHeight = this.maxHeight || 'calc(100vh - 280px)';
+    }
+  }
+
+  alternarTelaCheia() {
+    const alvo = this.container.closest('.animacao-wrapper') || this.container;
+    if (!document.fullscreenElement) {
+      if (alvo.requestFullscreen) {
+        alvo.requestFullscreen();
+      } else if (alvo.webkitRequestFullscreen) {
+        alvo.webkitRequestFullscreen();
+      }
+    } else {
+      if (document.exitFullscreen) {
+        document.exitFullscreen();
+      }
+    }
+  }
+
   desenharEstruturaEstatica() {
     this.camadaCaixas.innerHTML = '';
     this.camadaSetas.innerHTML = '';
     this.camadaRotulos.innerHTML = '';
 
     // 1. Caixas físicas do RU conforme coordenadas exatas do esboço
-    // catraca: (527,173)–(622,258)
     this.criarCaixa('catraca', 527, 173, 95, 85, 'catraca');
-    // Atendimento: (390,221)–(465,363)
     this.criarCaixa('atendimento', 390, 221, 75, 142, ['Atendi', 'mento']);
-    // Mesas: (123,172)–(222,258)
     this.criarCaixa('mesas', 123, 172, 99, 86, 'Mesas');
-    // Saída: (123,462)–(222,548)
     this.criarCaixa('saida', 123, 462, 99, 86, 'Saída');
 
-    // 2. Setas pretas de sentido idênticas à imagem anexa
-    // Fila 1: seta descendo à direita do trecho vertical
+    // 2. Setas pretas de sentido
     this.criarSeta(820, 70, 820, 180);
-    // Fila 1: seta indo para esquerda abaixo do trecho horizontal
     this.criarSeta(770, 270, 650, 270);
-
-    // Fila 2: seta descendo à direita de Atendimento
     this.criarSeta(545, 250, 545, 360);
-    // Fila 2: seta indo para esquerda abaixo de Atendimento
     this.criarSeta(490, 420, 370, 420);
-    // Fila 2: seta subindo à esquerda de Atendimento
     this.criarSeta(305, 360, 305, 240);
-    // Fila 2: seta indo para esquerda acima do trecho superior de Atendimento
     this.criarSeta(350, 165, 240, 165);
-
-    // Fila 3: seta descendo à esquerda de Fila 3
     this.criarSeta(85, 300, 85, 410);
 
     // 3. Rótulos das Filas posicionados conforme o desenho
@@ -182,7 +272,6 @@ export class AnimadorFila {
       g.appendChild(text);
     }
 
-    // Contador numérico de atendimentos/passagens
     const cont = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     cont.setAttribute('id', `contador_caixa_${id}`);
     cont.setAttribute('x', x + w / 2);
@@ -224,23 +313,10 @@ export class AnimadorFila {
     this.camadaRotulos.appendChild(text);
   }
 
-  /**
-   * Calcula a posição física (x, y, orientação) de um item ao longo do percurso
-   * em função de sua distância d a partir da cabeça da fila.
-   * Orientação: perpendicular ao segmento (se o caminho for vertical, retângulo é horizontal).
-   */
   obterPontoNoCaminho(filaNum, d) {
     if (filaNum === 1) {
-      // Fila 1: da cauda (766, 40) descendo até (766, 210), depois virando para a esquerda até (640, 210)
-      // Cabeça em (640, 210). Trecho horizontal tem comprimento 126.
       if (d <= 126) {
-        return {
-          x: 640 + d,
-          y: 210,
-          w: 10,
-          h: 24,
-          orientacao: 'horizontal' // trecho horizontal -> retangulo vertical
-        };
+        return { x: 640 + d, y: 210, w: 10, h: 24, orientacao: 'horizontal' };
       }
       const dVert = d - 126;
       return {
@@ -248,35 +324,27 @@ export class AnimadorFila {
         y: Math.max(30, 210 - dVert),
         w: 24,
         h: 10,
-        orientacao: 'vertical' // trecho vertical -> retangulo horizontal
+        orientacao: 'vertical'
       };
     }
 
     if (filaNum === 2) {
-      // Fila 2: (505, 215) -> (505, 376) -> (350, 376) -> (350, 214) -> (235, 214)
-      // Cabeça em (235, 214).
-      // Segmento 4: (235, 214) -> (350, 214), comprimento 115
       if (d <= 115) {
         return { x: 235 + d, y: 214, w: 10, h: 24, orientacao: 'horizontal' };
       }
-      // Segmento 3: (350, 214) -> (350, 376), comprimento 162
       if (d <= 277) {
         const dSub = d - 115;
         return { x: 350, y: 214 + dSub, w: 24, h: 10, orientacao: 'vertical' };
       }
-      // Segmento 2: (350, 376) -> (505, 376), comprimento 155
       if (d <= 432) {
         const dHoriz = d - 277;
         return { x: 350 + dHoriz, y: 376, w: 10, h: 24, orientacao: 'horizontal' };
       }
-      // Segmento 1: (505, 376) -> (505, 215), comprimento 161
       const dVert = d - 432;
       return { x: 505, y: Math.max(210, 376 - dVert), w: 24, h: 10, orientacao: 'vertical' };
     }
 
     if (filaNum === 3) {
-      // Fila 3: (176, 268) descendo até (176, 432).
-      // Cabeça em (176, 432). Comprimento 164.
       return {
         x: 176,
         y: Math.max(265, 432 - d),
@@ -294,6 +362,14 @@ export class AnimadorFila {
     if (filaNum === 2) return 593;
     if (filaNum === 3) return 164;
     return 200;
+  }
+
+  /**
+   * Atualiza a animação a partir de operações diff ou redesenho completo.
+   * Método de compatibilidade para garantir que chamadas a aplicarOperacoes nunca falhem.
+   */
+  aplicarOperacoes(diff, estado) {
+    this.renderizarEstado(estado);
   }
 
   /**
@@ -334,7 +410,7 @@ export class AnimadorFila {
       const ativa = filasAtivas.includes(fNum) && fObj?.ativa !== false;
       const filaArray = fObj?.fila || (fNum === 1 ? estado.fila : []) || [];
 
-      // Atualiza rótulo da fila com estado e quantidade
+      // Atualiza rótulo da fila
       const rotuloEl = document.getElementById(`rotulo_f${fNum}`);
       if (rotuloEl) {
         if (!filasAtivas.includes(fNum)) {
@@ -352,12 +428,8 @@ export class AnimadorFila {
         }
       }
 
-      if (!ativa) {
-        // Se a fila não estiver ativa, não desenha pessoas
-        continue;
-      }
+      if (!ativa) continue;
 
-      // Cálculo de espaçamento e agrupamento +N
       const totalPessoas = filaArray.length;
       const compMax = this.obterComprimentoMaximoCaminho(fNum);
       const espacoPadrao = 16;
@@ -381,7 +453,6 @@ export class AnimadorFila {
         this.desenharItemPessoa(fNum, pNum, pt, ehCabeca, fObj);
       }
 
-      // Se houver excesso que exceda a capacidade visual, exibe o selo "+N"
       if (precisaAgrupar) {
         const excedente = totalPessoas - qtdRenderizar;
         const distBadge = qtdRenderizar * espacamento;
@@ -399,10 +470,6 @@ export class AnimadorFila {
       g.dataset.esperaMs = fObj?.esperaNaCabecaMs || 0;
     }
 
-    // Cores fiéis ao esboço:
-    // Fila 1: vermelho (#ef4444). Cabeça: verde (#22c55e) na catraca.
-    // Fila 2: verde (#22c55e). Cabeça: rosa (#ec4899) junto às mesas.
-    // Fila 3: rosa (#ec4899). Cabeça: laranja (#f97316) junto à saída.
     let fillCor = '#ef4444';
     let strokeCor = 'none';
     let strokeW = '0';
@@ -433,7 +500,6 @@ export class AnimadorFila {
       }
     }
 
-    // Se houver destaque de fila ativo (ex: tela do celular), atenua as outras
     if (this.destaqueFila && this.destaqueFila !== filaNum) {
       g.style.opacity = '0.35';
     }
@@ -451,7 +517,6 @@ export class AnimadorFila {
     }
     g.appendChild(rect);
 
-    // Número da pessoa centralizado
     const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
     text.setAttribute('x', pt.x);
     text.setAttribute('y', pt.y + 3);
@@ -520,5 +585,6 @@ export class AnimadorFila {
 
   destruir() {
     if (this.timerPulso) clearInterval(this.timerPulso);
+    if (this.resizeObserver) this.resizeObserver.disconnect();
   }
 }

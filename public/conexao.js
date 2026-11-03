@@ -2,7 +2,8 @@
  * public/conexao.js
  * Gerenciador de conexão WebSocket, reconexão automática ultra-resiliente,
  * recuperação instantânea após tela apagada/bloqueio (< 3s), sincronização de relógio,
- * batimento (ping) a cada 5s com detecção de queda em 8s e fila de saída persistente em localStorage.
+ * batimento (ping) a cada 5s com detecção de queda em 8s, fallback por consulta HTTP (polling)
+ * e fila de saída persistente em localStorage.
  */
 
 const STORAGE_KEY_OFFLINE = 'ru_fila_offline_queue_v2';
@@ -21,13 +22,17 @@ export class GerenciadorConexao {
     };
 
     this.ultimoSeqConhecido = 0;
-    this.estadoConexao = 'offline'; // 'conectado' | 'reconectando' | 'offline'
+    this.estadoConexao = 'offline'; // 'conectado' | 'reconectando' | 'polling' | 'offline'
     this.tentativasReconexao = 0;
     this.timerReconexao = null;
     this.timerPing = null;
     this.timerTimeoutPong = null;
+    this.timerFallbackPolling = null;
+    this.timerChecagemQueda = null;
+    this.momentoQueda = null;
     this.offsetRelogioMs = 0;
     this.latenciaMs = 0;
+    this.ultimoTimestampAtualizacao = Date.now();
 
     // Callbacks do cliente
     this.onEstado = opcoes.onEstado || (() => {});
@@ -41,41 +46,44 @@ export class GerenciadorConexao {
     this.onAreaAtualizada = opcoes.onAreaAtualizada || (() => {});
 
     // Recuperação imediata ao reativar a tela ou foco do navegador
-    document.addEventListener('visibilitychange', () => {
-      if (document.visibilityState === 'visible') {
-        console.log('[CONEXAO] Tela reativada (visibilitychange). Verificando conexão...');
+    if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible') {
+          console.log('[CONEXAO] Tela reativada (visibilitychange). Verificando conexão...');
+          if (!this.estaConectado()) {
+            this.reconectarImediatamente();
+          }
+        }
+      });
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('pageshow', () => {
+        if (!this.estaConectado()) {
+          console.log('[CONEXAO] pageshow detectado. Reconectando...');
+          this.reconectarImediatamente();
+        }
+      });
+
+      window.addEventListener('focus', () => {
         if (!this.estaConectado()) {
           this.reconectarImediatamente();
         }
-      }
-    });
+      });
 
-    window.addEventListener('pageshow', () => {
-      if (!this.estaConectado()) {
-        console.log('[CONEXAO] pageshow detectado. Reconectando...');
+      window.addEventListener('online', () => {
+        console.log('[CONEXAO] Rede restabelecida (online).');
         this.reconectarImediatamente();
-      }
-    });
+      });
 
-    window.addEventListener('focus', () => {
-      if (!this.estaConectado()) {
-        this.reconectarImediatamente();
-      }
-    });
-
-    window.addEventListener('online', () => {
-      console.log('[CONEXAO] Rede restabelecida (online).');
-      this.reconectarImediatamente();
-    });
-
-    // Alerta ao fechar página com eventos pendentes
-    window.addEventListener('beforeunload', (e) => {
-      const pendentes = this.obterFilaOffline();
-      if (pendentes.length > 0) {
-        e.preventDefault();
-        e.returnValue = `Você possui ${pendentes.length} evento(s) pendente(s) de envio. Aguarde a reconexão!`;
-      }
-    });
+      window.addEventListener('beforeunload', (e) => {
+        const pendentes = this.obterFilaOffline();
+        if (pendentes.length > 0) {
+          e.preventDefault();
+          e.returnValue = `Você possui ${pendentes.length} evento(s) pendente(s) de envio. Aguarde a reconexão!`;
+        }
+      });
+    }
   }
 
   salvarCredenciais(pin, nome, area, papel) {
@@ -84,13 +92,17 @@ export class GerenciadorConexao {
     if (area !== undefined) this.dispositivo.area = String(area);
     if (papel) this.dispositivo.papel = papel;
 
-    localStorage.setItem(STORAGE_KEY_PIN, this.pin);
-    localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+    try {
+      localStorage.setItem(STORAGE_KEY_PIN, this.pin);
+      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+    } catch (e) {}
   }
 
   mudarArea(novaArea) {
     this.dispositivo.area = String(novaArea);
-    localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+    try {
+      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+    } catch (e) {}
 
     if (this.estaConectado()) {
       this.enviar({
@@ -103,20 +115,19 @@ export class GerenciadorConexao {
   }
 
   conectar() {
-    if (this.ws && (this.ws.readyState === WebSocket.CONNECTING || this.ws.readyState === WebSocket.OPEN)) {
+    if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
 
-    const host = window.location.host;
-    const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${protocol}//${host}`;
-
-    this.atualizarStatus('reconectando');
+    const host = typeof window !== 'undefined' ? window.location.host : 'localhost:3000';
+    const proto = typeof window !== 'undefined' && window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${proto}//${host}`;
 
     try {
       this.ws = new WebSocket(wsUrl);
-    } catch (err) {
-      console.warn('[WS] Falha ao criar WebSocket:', err);
+    } catch (e) {
+      console.warn('[WS] Falha ao instanciar WebSocket:', e);
+      this.iniciarContagemQueda();
       this.agendarReconexao();
       return;
     }
@@ -124,6 +135,8 @@ export class GerenciadorConexao {
     this.ws.onopen = () => {
       console.log('[WS] Conexão estabelecida. Enviando credenciais salvas...');
       this.tentativasReconexao = 0;
+      this.pararFallbackPolling();
+      this.momentoQueda = null;
       this.enviarAutenticacao();
     };
 
@@ -137,9 +150,9 @@ export class GerenciadorConexao {
     };
 
     this.ws.onclose = () => {
-      console.warn('[WS] Conexão encerrada pelo servidor ou suspensa pelo celular.');
+      console.warn('[WS] Conexão encerrada pelo servidor ou suspensa pelo aparelho.');
       this.pararPing();
-      this.atualizarStatus('reconectando');
+      this.iniciarContagemQueda();
       this.agendarReconexao();
     };
 
@@ -149,6 +162,85 @@ export class GerenciadorConexao {
         try { this.ws.close(); } catch (e) {}
       }
     };
+  }
+
+  iniciarContagemQueda() {
+    if (!this.momentoQueda) {
+      this.momentoQueda = Date.now();
+    }
+    this.atualizarStatus('reconectando');
+
+    if (!this.timerChecagemQueda) {
+      this.timerChecagemQueda = setInterval(() => {
+        if (this.estaConectado()) {
+          clearInterval(this.timerChecagemQueda);
+          this.timerChecagemQueda = null;
+          return;
+        }
+
+        const decorrido = Date.now() - (this.momentoQueda || Date.now());
+        if (decorrido >= 5000 && !this.timerFallbackPolling) {
+          console.warn('[CONEXAO] Mais de 5s desconectado. Iniciando fallback por consulta HTTP (GET /api/estado)...');
+          this.iniciarFallbackPolling();
+        }
+      }, 1000);
+    }
+  }
+
+  iniciarFallbackPolling() {
+    this.pararFallbackPolling();
+    this.atualizarStatus('polling');
+
+    const executarPoll = async () => {
+      if (this.estaConectado()) {
+        this.pararFallbackPolling();
+        return;
+      }
+
+      try {
+        const resp = await fetch(`/api/estado?desdeSeq=${this.ultimoSeqConhecido || 0}`);
+        if (!resp.ok) return;
+        const dados = await resp.json();
+
+        if (dados.sucesso) {
+          this.ultimoTimestampAtualizacao = Date.now();
+          if (dados.seqAtual) {
+            this.ultimoSeqConhecido = Math.max(this.ultimoSeqConhecido, dados.seqAtual);
+          }
+
+          if (dados.estado) {
+            this.onEstado(dados.estado, dados.sessao);
+          }
+
+          if (Array.isArray(dados.eventosFaltantes) && dados.eventosFaltantes.length > 0) {
+            for (const ev of dados.eventosFaltantes) {
+              if (ev.seq > this.ultimoSeqConhecido) {
+                this.ultimoSeqConhecido = ev.seq;
+              }
+              this.onNovoEvento(ev, dados.estado, []);
+            }
+          }
+
+          this.atualizarStatus('polling');
+        }
+      } catch (err) {
+        // Falha no poll
+      }
+    };
+
+    executarPoll();
+    this.timerFallbackPolling = setInterval(executarPoll, 2000);
+  }
+
+  pararFallbackPolling() {
+    if (this.timerFallbackPolling) {
+      clearInterval(this.timerFallbackPolling);
+      this.timerFallbackPolling = null;
+    }
+    if (this.timerChecagemQueda) {
+      clearInterval(this.timerChecagemQueda);
+      this.timerChecagemQueda = null;
+    }
   }
 
   reconectarImediatamente() {
@@ -170,14 +262,13 @@ export class GerenciadorConexao {
   }
 
   enviarAutenticacao() {
-    if (!this.pin) {
-      this.atualizarStatus('offline');
-      return;
-    }
+    const ehPainel = this.dispositivo.papel === 'painel';
+    const ehLocal = typeof window !== 'undefined' && ['localhost', '127.0.0.1', '::1'].includes(window.location.hostname);
 
     this.enviar({
       tipo: 'autenticar',
-      pin: this.pin,
+      pin: this.pin || '',
+      authLocal: ehLocal && ehPainel,
       dispositivoId: this.dispositivo.id,
       dispositivoNome: this.dispositivo.nome,
       area: this.dispositivo.area || '1',
@@ -188,7 +279,6 @@ export class GerenciadorConexao {
 
   agendarReconexao() {
     if (this.timerReconexao) clearTimeout(this.timerReconexao);
-    // Recuo com teto máximo estrito de 3 segundos
     const atraso = Math.min(3000, 400 * Math.pow(1.4, this.tentativasReconexao));
     this.tentativasReconexao++;
     this.timerReconexao = setTimeout(() => {
@@ -206,7 +296,6 @@ export class GerenciadorConexao {
           offsetRelogio: this.offsetRelogioMs
         });
 
-        // Se passar 8 segundos sem pong, considera a conexão morta e reinicia
         if (this.timerTimeoutPong) clearTimeout(this.timerTimeoutPong);
         this.timerTimeoutPong = setTimeout(() => {
           console.warn('[WS] 8 segundos sem resposta de pong. Reiniciando conexão...');
@@ -238,7 +327,6 @@ export class GerenciadorConexao {
         if (melhorAmostra) {
           this.offsetRelogioMs = melhorAmostra.offset;
           this.latenciaMs = Math.round(melhorAmostra.rtt / 2);
-          console.log(`[SYNC] Relógio sincronizado! Offset: ${this.offsetRelogioMs} ms, Latência RTT: ${melhorAmostra.rtt} ms`);
         }
         return;
       }
@@ -272,6 +360,9 @@ export class GerenciadorConexao {
   processarMensagemServidor(msg) {
     if (msg.tipo === 'autenticado') {
       if (msg.sucesso) {
+        this.pararFallbackPolling();
+        this.momentoQueda = null;
+        this.ultimoTimestampAtualizacao = Date.now();
         this.atualizarStatus('conectado');
         this.sincronizarRelogio();
         this.iniciarPing();
@@ -282,19 +373,29 @@ export class GerenciadorConexao {
 
         if (msg.estado) this.onEstado(msg.estado, msg.sessao);
 
-        // Se recebeu eventos faltantes da reconexão, atualiza o seq
         if (Array.isArray(msg.eventosFaltantes) && msg.eventosFaltantes.length > 0) {
           for (const ev of msg.eventosFaltantes) {
             if (ev.seq > this.ultimoSeqConhecido) this.ultimoSeqConhecido = ev.seq;
+            this.onNovoEvento(ev, msg.estado, []);
           }
         }
 
-        // Descarrega eventos offline pendentes em ordem
         this.descarregarFilaOffline();
       } else {
         console.warn('[AUTH] Falha na autenticação:', msg.mensagem);
         this.atualizarStatus('offline');
         this.onStatusConexao('auth_invalida', msg.mensagem);
+      }
+      return;
+    }
+
+    if (msg.tipo === 'pinAtualizado') {
+      if (msg.novoPin) {
+        this.pin = String(msg.novoPin).trim();
+        try {
+          localStorage.setItem(STORAGE_KEY_PIN, this.pin);
+        } catch (e) {}
+        console.log('[CONEXAO] PIN atualizado pelo servidor para:', this.pin);
       }
       return;
     }
@@ -309,12 +410,15 @@ export class GerenciadorConexao {
 
     if (msg.tipo === 'area_atualizada') {
       this.dispositivo.area = String(msg.area);
-      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+      try {
+        localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+      } catch (e) {}
       this.onAreaAtualizada(this.dispositivo.area);
       return;
     }
 
     if (msg.tipo === 'novo_evento') {
+      this.ultimoTimestampAtualizacao = Date.now();
       if (msg.evento?.seq) {
         this.ultimoSeqConhecido = Math.max(this.ultimoSeqConhecido, msg.evento.seq);
       }
@@ -323,12 +427,14 @@ export class GerenciadorConexao {
     }
 
     if (msg.tipo === 'sessao_iniciada') {
+      this.ultimoTimestampAtualizacao = Date.now();
       this.ultimoSeqConhecido = msg.evento?.seq || 1;
       this.onSessaoIniciada(msg.sessao, msg.estado, msg.evento);
       return;
     }
 
     if (msg.tipo === 'sessao_encerrada') {
+      this.ultimoTimestampAtualizacao = Date.now();
       this.onSessaoEncerrada(msg.sessao, msg.estado, msg.evento);
       return;
     }
@@ -360,9 +466,6 @@ export class GerenciadorConexao {
     }
   }
 
-  /**
-   * Envia comando para o servidor. Se estiver offline, enfileira no localStorage.
-   */
   enviarComando(comando) {
     const clientEventId = comando.clientEventId || `ev_${this.dispositivo.id}_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
     const cmdCompleto = {

@@ -161,9 +161,15 @@ header {
   color: var(--danger);
 }
 
-.status-badge.reconnecting {
+.status-badge.reconnecting,
+.status-badge.reconectando {
   background-color: rgba(217, 119, 6, 0.15);
   color: var(--warning);
+}
+
+.status-badge.polling {
+  background-color: rgba(234, 88, 12, 0.18);
+  color: #ea580c;
 }
 
 .status-dot {
@@ -415,21 +421,94 @@ input:focus, select:focus, textarea:focus {
 
 .animacao-container {
   width: 100%;
-  height: 180px;
+  aspect-ratio: 780 / 550;
   position: relative;
+  overflow: hidden;
+  isolation: isolate;
+  max-height: calc(100vh - 280px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 @media (min-width: 900px) {
   .animacao-container.grande {
-    height: 240px;
+    max-height: calc(100vh - 260px);
   }
+}
+
+.animacao-container.mapa-ajustado {
+  max-height: calc(100vh - 200px);
+}
+
+.animacao-container:fullscreen {
+  max-height: 100vh;
+  width: 100vw;
+  background: var(--bg-main);
+  padding: 16px;
+  box-sizing: border-box;
+}
+
+/* Controles de Ação do Mapa (Ajustar e Tela Cheia) */
+.animacao-botoes-topo {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 15;
+  display: flex;
+  gap: 6px;
+}
+
+.btn-mapa-acao {
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  border-radius: 6px;
+  background: rgba(15, 23, 42, 0.75);
+  color: #f8fafc;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  cursor: pointer;
+  backdrop-filter: blur(4px);
+  transition: background 0.15s ease;
+}
+
+.btn-mapa-acao:hover {
+  background: rgba(15, 23, 42, 0.95);
+  border-color: rgba(255, 255, 255, 0.4);
+}
+
+.btn-gear {
+  padding: 4px 8px;
+  font-size: 1.1rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  border-radius: 6px;
+}
+
+/* Barra de Controles de Reprodução */
+.player-controls {
+  position: relative;
+  z-index: 10;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  background: var(--bg-subtle);
+  border-radius: 8px;
 }
 
 /* SVG da Fila */
 .fila-svg {
   width: 100%;
   height: 100%;
+  max-height: 100%;
   display: block;
+  pointer-events: none;
 }
 
 .box-estacao {

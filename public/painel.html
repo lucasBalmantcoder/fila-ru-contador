@@ -105,6 +105,7 @@
         <span class="status-dot"></span>
         <span id="txt-conexao">Desconectado</span>
       </span>
+      <button class="btn btn-secondary btn-gear" id="btn-config-pin" onclick="PainelApp.abrirModalPin()" title="Configurar Senha de Acesso">⚙</button>
       <button class="btn btn-secondary" onclick="PainelApp.toggleTheme()" style="padding:4px 8px;">🌓</button>
     </div>
   </header>
@@ -164,11 +165,14 @@
       <!-- Coluna Principal: Animação em Tamanho Grande para Projeção -->
       <div style="display:flex; flex-direction:column; gap:12px;">
         <div class="animacao-wrapper">
-          <div class="card-title">
+          <div class="card-title" style="display:flex; justify-content:space-between; align-items:center;">
             <span>Visualização do Percurso em Tempo Real</span>
-            <span style="font-size:0.8rem; font-weight:normal; color:var(--text-muted)">Conforme esboço de referência</span>
+            <div style="display:flex; gap:6px;">
+              <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="PainelApp.ajustarMapa()">Ajustar à tela</button>
+              <button type="button" class="btn btn-secondary" style="padding:2px 8px; font-size:0.75rem;" onclick="PainelApp.telaCheiaMapa()">⛶ Tela cheia</button>
+            </div>
           </div>
-          <div class="animacao-container grande" id="container-animacao-painel" style="height:440px;"></div>
+          <div class="animacao-container grande" id="container-animacao-painel"></div>
         </div>
 
         <!-- Log dos Últimos Eventos Registrados -->
@@ -383,6 +387,66 @@
         <div class="btn-group" style="justify-content:flex-end; margin-top:12px;">
           <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModais()">Cancelar</button>
           <button type="submit" class="btn btn-success">▶ Iniciar Coleta</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- ====================================================================
+       MODAL: CONFIGURAÇÃO DE SENHA (PIN)
+       ==================================================================== -->
+  <div class="modal-backdrop" id="modal-config-pin">
+    <div class="modal-dialog" style="max-width:440px;">
+      <div class="modal-title">
+        <span>⚙ Senha de Acesso ao Servidor</span>
+        <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModalPin()">✕</button>
+      </div>
+
+      <div id="pin-aviso-fixo" style="display:none; background:rgba(217,119,6,0.15); border:1px solid var(--warning); color:var(--warning); padding:8px 12px; border-radius:6px; font-size:0.85rem;">
+        🔒 A senha está fixada por parâmetro de inicialização (<code>--pin</code> ou <code>FILA_PIN</code>) e não pode ser alterada dinamicamente.
+      </div>
+
+      <form id="form-config-pin" onsubmit="event.preventDefault(); PainelApp.salvarNovoPin();">
+        <div style="display:flex; flex-direction:column; gap:12px;">
+          <div class="form-group">
+            <label>Senha Atual</label>
+            <div style="display:flex; gap:6px;">
+              <input type="password" id="pin-atual" readonly style="flex:1; background:var(--bg-subtle); cursor:default;">
+              <button type="button" class="btn btn-secondary" onclick="PainelApp.toggleVerPin('pin-atual')">👁️</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="pin-novo">Nova Senha (4 a 8 dígitos numéricos) *</label>
+            <div style="display:flex; gap:6px;">
+              <input type="password" id="pin-novo" required pattern="[0-9]{4,8}" maxlength="8" inputmode="numeric" placeholder="Ex: 5678" style="flex:1;">
+              <button type="button" class="btn btn-secondary" onclick="PainelApp.toggleVerPin('pin-novo')">👁️</button>
+            </div>
+          </div>
+
+          <div class="form-group">
+            <label for="pin-confirma">Confirmar Nova Senha *</label>
+            <div style="display:flex; gap:6px;">
+              <input type="password" id="pin-confirma" required pattern="[0-9]{4,8}" maxlength="8" inputmode="numeric" placeholder="Repita a nova senha" style="flex:1;">
+              <button type="button" class="btn btn-secondary" onclick="PainelApp.toggleVerPin('pin-confirma')">👁️</button>
+            </div>
+          </div>
+
+          <label style="display:flex; align-items:center; gap:8px; cursor:pointer; font-size:0.85rem;">
+            <input type="checkbox" id="chk-desconectar-aparelhos" style="width:auto;">
+            <span>Exigir a nova senha em todos os aparelhos (desconecta os atuais)</span>
+          </label>
+
+          <div id="pin-feedback-erro" style="display:none; color:var(--danger); font-size:0.85rem; font-weight:700;"></div>
+          <div id="pin-feedback-sucesso" style="display:none; color:var(--success); font-size:0.85rem; font-weight:700;"></div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; margin-top:8px;">
+            <button type="button" class="btn btn-secondary" id="btn-restaurar-pin" onclick="PainelApp.restaurarPinPadrao()">Restaurar padrão (1234)</button>
+            <div style="display:flex; gap:8px;">
+              <button type="button" class="btn btn-secondary" onclick="PainelApp.fecharModalPin()">Cancelar</button>
+              <button type="submit" class="btn btn-primary" id="btn-salvar-pin">Salvar Senha</button>
+            </div>
+          </div>
         </div>
       </form>
     </div>

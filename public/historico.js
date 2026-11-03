@@ -7,30 +7,82 @@
 import { derivarEstado } from '../shared/estado.js';
 import { calcularMetricas, formatarDuracao, formatarHoraLocal, formatarNumero } from '../shared/metricas.js';
 import { AnimadorFila } from './animacao.js';
+import { ControladorReplay } from './replay.js';
+import { GerenciadorConexao } from './conexao.js';
 
 const HistoricoApp = {
   sessaoAtual: null,
   dadosCompletos: null,
   metricasAtuais: null,
   animador: null,
+  controladorReplay: null,
+  conexaoAoVivo: null,
   graficos: {},
   abaAtual: 'geral',
   excluirSemCobertura: false,
   ordenacaoTabela: { coluna: 'pessoa', asc: true },
 
-  // Estado do Player de Reprodução
-  replay: {
-    ativo: false,
-    timer: null,
-    velocidade: 5,
-    tAtual: 0,
-    tInicio: 0,
-    tFim: 0,
-    duracaoTotal: 0
-  },
-
   async init() {
     this.animador = new AnimadorFila('container-animacao-replay');
+
+    this.controladorReplay = new ControladorReplay({
+      velocidadeInicial: 5,
+      onTick: (t, decorrido, progresso) => {
+        this.atualizarInterfaceReplay(t, decorrido, progresso);
+      },
+      onStatusChange: (tocando) => {
+        const btn = document.getElementById('btn-play-pause');
+        if (btn) btn.textContent = tocando ? '⏸ Pausar' : '▶ Reproduzir';
+      },
+      onFim: () => {
+        const btn = document.getElementById('btn-play-pause');
+        if (btn) btn.textContent = '▶ Reproduzir';
+      }
+    });
+
+    const slider = document.getElementById('slider-timeline');
+    if (slider) {
+      slider.addEventListener('mousedown', () => this.controladorReplay.iniciarArrasto());
+      slider.addEventListener('touchstart', () => this.controladorReplay.iniciarArrasto(), { passive: true });
+      slider.addEventListener('input', (e) => {
+        const frac = parseFloat(e.target.value) / 1000;
+        this.controladorReplay.arrastarPara(frac);
+      });
+      slider.addEventListener('change', (e) => {
+        const frac = parseFloat(e.target.value) / 1000;
+        this.controladorReplay.finalizarArrasto(frac);
+      });
+    }
+
+    window.addEventListener('keydown', (e) => {
+      const tag = (e.target.tagName || '').toLowerCase();
+      if (tag === 'input' || tag === 'textarea' || tag === 'select' || e.target.isContentEditable) {
+        return;
+      }
+
+      const container = document.getElementById('detalhes-sessao');
+      if (!container || container.style.display === 'none') return;
+
+      if (e.code === 'Space') {
+        e.preventDefault();
+        this.togglePlayPause();
+      } else if (e.code === 'ArrowLeft') {
+        e.preventDefault();
+        this.controladorReplay.avancar(-5000);
+      } else if (e.code === 'ArrowRight') {
+        e.preventDefault();
+        this.controladorReplay.avancar(5000);
+      } else if (e.code === 'Home') {
+        e.preventDefault();
+        this.reiniciarReplay();
+      }
+    });
+
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('diagnostico') === '1') {
+      this.executarAutoDiagnostico();
+    }
+
     await this.carregarListaSessoes();
   },
 
@@ -95,6 +147,10 @@ const HistoricoApp = {
 
   voltarParaLista() {
     this.pararReplay();
+    if (this.conexaoAoVivo) {
+      this.conexaoAoVivo.fechar();
+      this.conexaoAoVivo = null;
+    }
     document.getElementById('card-lista-sessoes').style.display = 'block';
     document.getElementById('detalhes-sessao').style.display = 'none';
   },
@@ -118,6 +174,10 @@ const HistoricoApp = {
       // Inicializa Cabeçalho e Replay
       this.preencherCabecalhoSessao();
       this.iniciarPlayerReplay(this.dadosCompletos.eventos);
+
+      if (this.sessaoAtual && this.sessaoAtual.status === 'ativa') {
+        this.iniciarConexaoAoVivo(id);
+      }
 
       // Exibe Aba Geral por padrão
       this.selecionarAba('geral');

@@ -10,7 +10,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { WebSocketServer, WebSocket } from 'ws';
-import { detectarEnderecosRede, obterOuGerarPin, gerarQrCode } from './rede.js';
+import { detectarEnderecosRede, obterOuGerarPin, obterStatusPin, salvarPinConfig, ehOrigemLocal, gerarQrCode } from './rede.js';
 import { GerenciadorSessoes } from './sessao.js';
 import { calcularMetricas, formatarNumero, formatarDuracao, formatarHoraLocal } from '../shared/metricas.js';
 
@@ -19,9 +19,10 @@ const __dirname = path.dirname(__filename);
 const DIR_RAIZ = path.resolve(__dirname, '..');
 const DIR_PUBLIC = path.resolve(DIR_RAIZ, 'public');
 const DIR_SHARED = path.resolve(DIR_RAIZ, 'shared');
+const DIR_DADOS = path.resolve(DIR_RAIZ, 'dados');
 
 const PORTA = process.env.PORT || 3000;
-const PIN_ACESSO = obterOuGerarPin();
+let PIN_ACESSO = obterOuGerarPin();
 const gerenciadorSessoes = new GerenciadorSessoes();
 
 // Rastreamento de tentativas incorretas de PIN por endereço IP
@@ -126,15 +127,23 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       const qrFila2 = (await gerarQrCode(`${urlCelularBase}?fila=2`)).qrDataUrl;
       const qrFila3 = (await gerarQrCode(`${urlCelularBase}?fila=3`)).qrDataUrl;
 
+      const statusPin = obterStatusPin();
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         ipPreferido: rede.ipPreferido,
         todasInterfaces: rede.todasInterfaces,
         porta: PORTA,
         pin: PIN_ACESSO,
+        pinFixoPorParametro: statusPin.fixoPorParametro,
+        origemPin: statusPin.origem,
         urlCelular: urlCelularBase,
         qrDataUrl,
         qrFilas: {
+          1: qrFila1,
+          2: qrFila2,
+          3: qrFila3
+        },
+        qrPorFila: {
           1: qrFila1,
           2: qrFila2,
           3: qrFila3
@@ -145,6 +154,124 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ erro: err.message }));
     }
+    return;
+  }
+
+  // GET /api/estado - Consulta e fallback quando WebSocket estiver fora
+  if (pathname === '/api/estado' && req.method === 'GET') {
+    const desdeSeq = parseInt(urlParsed.searchParams.get('desdeSeq'), 10) || 0;
+    const sessaoAtiva = gerenciadorSessoes.sessaoAtiva;
+    if (!sessaoAtiva) {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({
+        sucesso: true,
+        sessao: null,
+        estado: null,
+        eventosFaltantes: [],
+        seqAtual: 0
+      }));
+      return;
+    }
+
+    const eventosFaltantes = sessaoAtiva.eventos.filter(e => e.seq > desdeSeq);
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      sucesso: true,
+      sessao: gerenciadorSessoes.obterResumoSessaoAtiva(),
+      estado: sessaoAtiva.estadoAtual,
+      eventosFaltantes,
+      seqAtual: sessaoAtiva.seq
+    }));
+    return;
+  }
+
+  // GET /api/config/pin - Retorna status e dados da senha de acesso (restrito ao notebook local)
+  if (pathname === '/api/config/pin' && req.method === 'GET') {
+    if (!ehOrigemLocal(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sucesso: false, erro: 'Acesso restrito ao computador local.' }));
+      return;
+    }
+
+    const statusPin = obterStatusPin();
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({
+      sucesso: true,
+      pinMascarado: '•'.repeat(PIN_ACESSO.length),
+      pinReal: PIN_ACESSO,
+      fixoPorParametro: statusPin.fixoPorParametro,
+      origem: statusPin.origem
+    }));
+    return;
+  }
+
+  // POST /api/config/pin - Altera a senha de acesso (restrito ao notebook local)
+  if (pathname === '/api/config/pin' && req.method === 'POST') {
+    if (!ehOrigemLocal(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sucesso: false, erro: 'A alteração de senha só é permitida a partir do notebook local.' }));
+      return;
+    }
+
+    const statusPin = obterStatusPin();
+    if (statusPin.fixoPorParametro) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ sucesso: false, erro: 'senha definida por parâmetro de inicialização' }));
+      return;
+    }
+
+    let body = '';
+    req.on('data', chunk => body += chunk);
+    req.on('end', () => {
+      try {
+        const dados = JSON.parse(body || '{}');
+        const novoPin = String(dados.novoPin || '').trim();
+
+        if (!/^\d{4,8}$/.test(novoPin)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: false, erro: 'A nova senha deve ser numérica e conter entre 4 e 8 dígitos.' }));
+          return;
+        }
+
+        if (novoPin === PIN_ACESSO) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: false, erro: 'A nova senha deve ser diferente da senha atual.' }));
+          return;
+        }
+
+        salvarPinConfig(novoPin);
+        PIN_ACESSO = novoPin;
+
+        // Auditoria
+        fs.mkdirSync(DIR_DADOS, { recursive: true });
+        const entradaAudit = {
+          t: Date.now(),
+          acao: 'pin_alterado',
+          autorIp: req.socket.remoteAddress,
+          desconectarTodos: !!dados.desconectarTodos
+        };
+        fs.appendFileSync(path.join(DIR_DADOS, 'pin_auditoria.jsonl'), JSON.stringify(entradaAudit) + '\n', 'utf-8');
+
+        if (dados.desconectarTodos) {
+          for (const [ws, disp] of conexoesAtivas.entries()) {
+            if (disp.papel !== 'painel') {
+              ws.close(4001, 'PIN alterado pelo administrador');
+            }
+          }
+        } else {
+          transmitirParaTodos({
+            tipo: 'pinAtualizado',
+            novoPin: novoPin
+          });
+        }
+
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ sucesso: true, mensagem: 'Senha alterada com sucesso!', novoPin }));
+      } catch (err) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ sucesso: false, erro: err.message }));
+      }
+    });
     return;
   }
 
@@ -410,7 +537,7 @@ wss.on('connection', (ws, req) => {
   ws.on('message', (dadosBrutos) => {
     try {
       const msg = JSON.parse(dadosBrutos.toString());
-      tratarMensagemWebSocket(ws, msg, infoDispositivo);
+      tratarMensagemWebSocket(ws, msg, infoDispositivo, req);
     } catch (err) {
       console.warn('[WS] Mensagem inválida recebida:', err);
     }
@@ -433,14 +560,17 @@ wss.on('connection', (ws, req) => {
 /**
  * Processamento das mensagens recebidas pelo WebSocket
  */
-function tratarMensagemWebSocket(ws, msg, dispositivo) {
+function tratarMensagemWebSocket(ws, msg, dispositivo, req) {
   // 1. Autenticação por PIN e Reconexão
   if (msg.tipo === 'autenticar') {
     const agora = Date.now();
-    const pinRecebido = String(msg.pin).trim();
+    const pinRecebido = String(msg.pin || '').trim();
+    const ehLocal = ehOrigemLocal(req) || ehOrigemLocal({ socket: { remoteAddress: dispositivo.ip } });
+    const ehPainel = msg.papel === 'painel' || msg.nome === 'Painel Notebook' || msg.authLocal;
+    const autenticadoPorOrigemLocal = ehLocal && ehPainel;
 
-    // Se o PIN estiver correto, NÃO bloqueia (permite reconexão legítima)
-    if (pinRecebido !== PIN_ACESSO) {
+    // Se não for autenticado automaticamente por origem local, valida o PIN
+    if (!autenticadoPorOrigemLocal && pinRecebido !== PIN_ACESSO) {
       const tentativa = tentativasPinPorIp.get(dispositivo.ip) || { contagem: 0, bloqueadoAte: 0 };
       if (agora < tentativa.bloqueadoAte) {
         const restanteSeg = Math.ceil((tentativa.bloqueadoAte - agora) / 1000);
@@ -467,7 +597,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
       return;
     }
 
-    // PIN Válido: limpa eventuais tentativas incorretas
+    // PIN Válido ou Autenticação Local: limpa eventuais tentativas incorretas
     tentativasPinPorIp.delete(dispositivo.ip);
 
     // Se já havia um socket antigo conectado para este mesmo dispositivoId, fecha o antigo
@@ -483,7 +613,7 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
     dispositivo.autenticado = true;
     dispositivo.id = dId;
     if (msg.dispositivoNome) dispositivo.nome = msg.dispositivoNome;
-    if (msg.papel) dispositivo.papel = msg.papel;
+    dispositivo.papel = msg.papel || (ehPainel ? 'painel' : 'ambos');
     if (msg.area) dispositivo.area = msg.area;
 
     gerenciadorSessoes.registrarConexao(dispositivo.id, dispositivo.nome, dispositivo.area);
@@ -645,6 +775,14 @@ function tratarMensagemWebSocket(ws, msg, dispositivo) {
           estado: res.estado,
           diff: res.diff
         });
+        if (res.eventoEncadeado) {
+          transmitirParaTodos({
+            tipo: 'novo_evento',
+            evento: res.eventoEncadeado,
+            estado: res.estado,
+            diff: []
+          });
+        }
       }
 
       transmitirListaAparelhos();
