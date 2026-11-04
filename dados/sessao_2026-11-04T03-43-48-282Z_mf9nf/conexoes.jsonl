@@ -1,0 +1,19 @@
+{"t":1793763845808,"tipo":"conexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","area":"2"}
+{"t":1793763855502,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"2","paraArea":"1","autor":"Celular"}
+{"t":1793763855507,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"1","autor":"Celular"}
+{"t":1793763878437,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"1","paraArea":"3","autor":"Celular"}
+{"t":1793763878439,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"3","autor":"Celular"}
+{"t":1793763892359,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"3","paraArea":"2","autor":"Celular"}
+{"t":1793763892362,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"2","autor":"Celular"}
+{"t":1793763905874,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"2","paraArea":"1","autor":"Celular"}
+{"t":1793763905876,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"1","autor":"Celular"}
+{"t":1793763921853,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"1","paraArea":"2","autor":"Celular"}
+{"t":1793763921856,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"2","autor":"Celular"}
+{"t":1793764108512,"tipo":"conexao","dispositivoId":"cel_6v2oigi","dispositivoNome":"Painel Notebook","area":"todas"}
+{"t":1793764112333,"tipo":"conexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","area":"2"}
+{"t":1793764122581,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"2","paraArea":"1","autor":"Celular"}
+{"t":1793764122586,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"1","autor":"Celular"}
+{"t":1793764164342,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","deArea":"1","paraArea":"2","autor":"Celular"}
+{"t":1793764164344,"tipo":"mudanca_area","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","paraArea":"2","autor":"Celular"}
+{"t":1793764386447,"tipo":"conexao","dispositivoId":"cel_6v2oigi","dispositivoNome":"Painel Notebook","area":"todas"}
+{"t":1793764389229,"tipo":"conexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","area":"3"}

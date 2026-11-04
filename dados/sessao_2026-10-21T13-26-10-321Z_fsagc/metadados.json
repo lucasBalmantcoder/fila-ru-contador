@@ -1,0 +1,20 @@
+{
+  "id": "sessao_2026-10-21T13-26-10-321Z_fsagc",
+  "nome": "Teste Unitário",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1792589170321,
+  "fimMs": 1792589170339,
+  "config": {
+    "nome": "Teste Unitário",
+    "duracaoPrevistaMin": 60,
+    "servidores": 1,
+    "teste": true
+  }
+}

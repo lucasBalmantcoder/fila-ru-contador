@@ -1,0 +1,1 @@
+{"t":1793718108191,"codigo":"PESSOA_JA_AVANCOU","mensagem":"Pessoa 2 já avançou na Fila 2 e não pode ser revertida.","fila":1,"comando":{"acao":"reversao","fila":1,"clientEventId":"rev_cat2_bloq"},"dispositivoId":"cel_1","dispositivoNome":"Celular 1"}

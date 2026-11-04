@@ -1,0 +1,3 @@
+{"t":1793667472908,"codigo":"JA_ATENDIDO","mensagem":"Pessoa 1 já foi confirmada anteriormente.","comando":{"acao":"atendido","pessoaEsperada":1,"clientEventId":"c2_2"},"dispositivoId":"cel_2","dispositivoNome":"Celular 2"}
+{"t":1793667472909,"codigo":"CABECA_MUDOU","mensagem":"Cabeça da fila mudou. Esperado: 99, Atual: 2","comando":{"acao":"atendido","pessoaEsperada":99,"clientEventId":"c1_3"},"dispositivoId":"cel_1","dispositivoNome":"Celular 1"}
+{"t":1793667472910,"codigo":"JA_ATENDIDO","mensagem":"Pessoa 1 já foi atendida e não pode ser anulada.","comando":{"acao":"anulacao","pessoa":1,"clientEventId":"c1_5"},"dispositivoId":"cel_1","dispositivoNome":"Celular 1"}

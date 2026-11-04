@@ -1,0 +1,8 @@
+{"seq":1,"t":1792589170321,"tipo":"sessao_iniciada","dispositivoId":"servidor","dispositivoNome":"Servidor","clientEventId":"init_1792589170321","tardio":false,"config":{"id":"sessao_2026-10-21T13-26-10-321Z_fsagc","nome":"Teste Unitário","local":"RU Central","observacoes":"","duracaoPrevistaMin":60,"servidores":1,"blocoMin":5,"limiarPausaSeg":60,"teste":true,"status":"ativa","inicioMs":1792589170321,"fimMs":null,"config":{"nome":"Teste Unitário","duracaoPrevistaMin":60,"servidores":1,"teste":true}}}
+{"seq":2,"t":1792589170329,"tipo":"chegada","pessoa":1,"dispositivoId":"cel_1","dispositivoNome":"Celular 1","clientEventId":"c1_1","tardio":false,"tCliente":null}
+{"seq":3,"t":1792589170331,"tipo":"chegada","pessoa":2,"dispositivoId":"cel_2","dispositivoNome":"Celular 2","clientEventId":"c2_1","tardio":false,"tCliente":null}
+{"seq":4,"t":1792589170332,"tipo":"atendimento","pessoa":1,"dispositivoId":"cel_1","dispositivoNome":"Celular 1","clientEventId":"c1_2","tardio":false,"tCliente":null}
+{"seq":5,"t":1792589170335,"tipo":"anulacao","pessoa":2,"dispositivoId":"cel_1","dispositivoNome":"Celular 1","clientEventId":"c1_4","tardio":false,"tCliente":null}
+{"seq":6,"t":1792589170337,"tipo":"reversao","pessoa":1,"dispositivoId":"cel_1","dispositivoNome":"Celular 1","clientEventId":"c1_6","tardio":false,"tCliente":null}
+{"seq":7,"t":1792589170338,"tipo":"chegada","pessoa":3,"dispositivoId":"cel_1","dispositivoNome":"Celular 1","clientEventId":"offline_1","tardio":true,"tCliente":1792589165338}
+{"seq":8,"t":1792589170339,"tipo":"sessao_encerrada","dispositivoId":"servidor","dispositivoNome":"Servidor","clientEventId":"end_1792589170339","tardio":false}

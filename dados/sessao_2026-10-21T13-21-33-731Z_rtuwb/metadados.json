@@ -1,0 +1,20 @@
+{
+  "id": "sessao_2026-10-21T13-21-33-731Z_rtuwb",
+  "nome": "Teste Unitário",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1792588893731,
+  "fimMs": 1792588893748,
+  "config": {
+    "nome": "Teste Unitário",
+    "duracaoPrevistaMin": 60,
+    "servidores": 1,
+    "teste": true
+  }
+}

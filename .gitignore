@@ -10,7 +10,7 @@ npm-debug.log*
 .env.*
 
 # Dados coletados em campo (podem conter informações das sessões)
-dados/
+
 data/
 sessoes/
 *.sqlite

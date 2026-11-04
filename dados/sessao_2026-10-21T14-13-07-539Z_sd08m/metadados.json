@@ -1,0 +1,24 @@
+{
+  "id": "sessao_2026-10-21T14-13-07-539Z_sd08m",
+  "nome": "Almoço RU - Quarta",
+  "local": "RU Campus Santarém",
+  "observacoes": "",
+  "duracaoPrevistaMin": 180,
+  "servidores": 1,
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": false,
+  "status": "encerrada",
+  "inicioMs": 1792591987539,
+  "fimMs": 1792594715164,
+  "config": {
+    "nome": "Almoço RU - Quarta",
+    "local": "RU Campus Santarém",
+    "observacoes": "",
+    "duracaoPrevistaMin": 180,
+    "servidores": 1,
+    "blocoMin": 5,
+    "limiarPausaSeg": 60,
+    "teste": false
+  }
+}

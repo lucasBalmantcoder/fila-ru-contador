@@ -1,0 +1,20 @@
+{
+  "id": "sessao_2026-11-03T00-57-52-903Z_nqjp4",
+  "nome": "Teste Unitário",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1793667472903,
+  "fimMs": 1793667472912,
+  "config": {
+    "nome": "Teste Unitário",
+    "duracaoPrevistaMin": 60,
+    "servidores": 1,
+    "teste": true
+  }
+}

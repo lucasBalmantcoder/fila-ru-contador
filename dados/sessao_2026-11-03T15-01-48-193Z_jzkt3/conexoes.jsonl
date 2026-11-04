@@ -1,0 +1,4 @@
+{"t":1793718272399,"tipo":"conexao","dispositivoId":"cel_6v2oigi","dispositivoNome":"Painel Notebook","area":"todas"}
+{"t":1793718303631,"tipo":"conexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","area":"1"}
+{"t":1793718303782,"tipo":"conexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","area":"1"}
+{"t":1793718303784,"tipo":"desconexao","dispositivoId":"cel_04hd8mm","dispositivoNome":"Celular","causa":"socket_fechado"}

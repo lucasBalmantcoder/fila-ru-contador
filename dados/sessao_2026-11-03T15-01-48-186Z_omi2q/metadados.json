@@ -1,0 +1,64 @@
+{
+  "id": "sessao_2026-11-03T15-01-48-186Z_omi2q",
+  "nome": "Teste Encadeamento",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "servidoresPorFila": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+  },
+  "rotulosFilas": {
+    "1": {
+      "entrada": "CHEGADA",
+      "saida": "PASSOU NA CATRACA"
+    },
+    "2": {
+      "entrada": "PASSOU NA CATRACA",
+      "saida": "CHEGOU ÀS MESAS"
+    },
+    "3": {
+      "entrada": "SAIU DAS MESAS",
+      "saida": "PASSOU NA SAÍDA"
+    }
+  },
+  "filasAtivas": [
+    1,
+    2
+  ],
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1793718108186,
+  "fimMs": 1793718108192,
+  "config": {
+    "nome": "Teste Encadeamento",
+    "filasAtivas": [
+      1,
+      2
+    ],
+    "teste": true,
+    "rotulosFilas": {
+      "1": {
+        "entrada": "CHEGADA",
+        "saida": "PASSOU NA CATRACA"
+      },
+      "2": {
+        "entrada": "PASSOU NA CATRACA",
+        "saida": "CHEGOU ÀS MESAS"
+      },
+      "3": {
+        "entrada": "SAIU DAS MESAS",
+        "saida": "PASSOU NA SAÍDA"
+      }
+    },
+    "servidoresPorFila": {
+      "1": 1,
+      "2": 1,
+      "3": 1
+    }
+  }
+}

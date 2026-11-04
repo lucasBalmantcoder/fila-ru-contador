@@ -1,0 +1,62 @@
+{
+  "id": "sessao_2026-11-03T01-14-56-193Z_vc6ov",
+  "nome": "Teste Comb 3",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "servidoresPorFila": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+  },
+  "rotulosFilas": {
+    "1": {
+      "entrada": "CHEGADA",
+      "saida": "PASSOU NA CATRACA"
+    },
+    "2": {
+      "entrada": "PASSOU NA CATRACA",
+      "saida": "CHEGOU ÀS MESAS"
+    },
+    "3": {
+      "entrada": "SAIU DAS MESAS",
+      "saida": "PASSOU NA SAÍDA"
+    }
+  },
+  "filasAtivas": [
+    3
+  ],
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1793668496193,
+  "fimMs": 1793668496194,
+  "config": {
+    "nome": "Teste Comb 3",
+    "filasAtivas": [
+      3
+    ],
+    "teste": true,
+    "rotulosFilas": {
+      "1": {
+        "entrada": "CHEGADA",
+        "saida": "PASSOU NA CATRACA"
+      },
+      "2": {
+        "entrada": "PASSOU NA CATRACA",
+        "saida": "CHEGOU ÀS MESAS"
+      },
+      "3": {
+        "entrada": "SAIU DAS MESAS",
+        "saida": "PASSOU NA SAÍDA"
+      }
+    },
+    "servidoresPorFila": {
+      "1": 1,
+      "2": 1,
+      "3": 1
+    }
+  }
+}

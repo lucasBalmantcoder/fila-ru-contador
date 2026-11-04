@@ -1,0 +1,64 @@
+{
+  "id": "sessao_2026-11-03T15-01-48-104Z_a4136",
+  "nome": "Teste Unitário",
+  "local": "RU Central",
+  "observacoes": "",
+  "duracaoPrevistaMin": 60,
+  "servidores": 1,
+  "servidoresPorFila": {
+    "1": 1,
+    "2": 1,
+    "3": 1
+  },
+  "rotulosFilas": {
+    "1": {
+      "entrada": "CHEGADA",
+      "saida": "PASSOU NA CATRACA"
+    },
+    "2": {
+      "entrada": "PASSOU NA CATRACA",
+      "saida": "CHEGOU ÀS MESAS"
+    },
+    "3": {
+      "entrada": "SAIU DAS MESAS",
+      "saida": "PASSOU NA SAÍDA"
+    }
+  },
+  "filasAtivas": [
+    1
+  ],
+  "blocoMin": 5,
+  "limiarPausaSeg": 60,
+  "teste": true,
+  "status": "encerrada",
+  "inicioMs": 1793718108104,
+  "fimMs": 1793718108122,
+  "config": {
+    "nome": "Teste Unitário",
+    "duracaoPrevistaMin": 60,
+    "servidores": 1,
+    "teste": true,
+    "filasAtivas": [
+      1
+    ],
+    "rotulosFilas": {
+      "1": {
+        "entrada": "CHEGADA",
+        "saida": "PASSOU NA CATRACA"
+      },
+      "2": {
+        "entrada": "PASSOU NA CATRACA",
+        "saida": "CHEGOU ÀS MESAS"
+      },
+      "3": {
+        "entrada": "SAIU DAS MESAS",
+        "saida": "PASSOU NA SAÍDA"
+      }
+    },
+    "servidoresPorFila": {
+      "1": 1,
+      "2": 1,
+      "3": 1
+    }
+  }
+}

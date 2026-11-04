@@ -1,0 +1,2 @@
+{"t":1793668637079,"codigo":"COMANDO_DESCONHECIDO","mensagem":"Ação \"saida\" desconhecida.","fila":2,"comando":{"acao":"saida","fila":2,"pessoaEsperada":1,"clientEventId":"f2_iso_2"},"dispositivoId":"cel_1","dispositivoNome":"Celular 1"}
+{"t":1793668637080,"codigo":"COMANDO_DESCONHECIDO","mensagem":"Ação \"saida\" desconhecida.","fila":3,"comando":{"acao":"saida","fila":3,"pessoaEsperada":1,"clientEventId":"f3_2"},"dispositivoId":"cel_2","dispositivoNome":"Celular 2"}

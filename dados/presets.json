@@ -1,0 +1,104 @@
+[
+  {
+    "id": "completo",
+    "nome": "Completo (Fila, Atendimento, Mesas)",
+    "descricao": "Percurso integral com fila inicial, atendimento e mesas.",
+    "zonas": [
+      {
+        "id": "z1",
+        "nome": "Fila inicial",
+        "cor": "#dc2626",
+        "modo": "fifo",
+        "habilitada": true,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z2",
+        "nome": "Atendimento",
+        "cor": "#16a34a",
+        "modo": "fifo",
+        "habilitada": true,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z3",
+        "nome": "Mesas",
+        "cor": "#ec4899",
+        "modo": "contagem",
+        "habilitada": true,
+        "capacidade": 120,
+        "servidores": null
+      }
+    ]
+  },
+  {
+    "id": "fila_atendimento",
+    "nome": "Fila + Atendimento",
+    "descricao": "Coleta na fila externa e no atendimento de pratos; sem mesas.",
+    "zonas": [
+      {
+        "id": "z1",
+        "nome": "Fila inicial",
+        "cor": "#dc2626",
+        "modo": "fifo",
+        "habilitada": true,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z2",
+        "nome": "Atendimento",
+        "cor": "#16a34a",
+        "modo": "fifo",
+        "habilitada": true,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z3",
+        "nome": "Mesas",
+        "cor": "#ec4899",
+        "modo": "contagem",
+        "habilitada": false,
+        "capacidade": 120,
+        "servidores": null
+      }
+    ]
+  },
+  {
+    "id": "somente_fila",
+    "nome": "Somente fila",
+    "descricao": "Coleta clássica simplificada: chegada e saída na catraca.",
+    "zonas": [
+      {
+        "id": "z1",
+        "nome": "Fila inicial",
+        "cor": "#dc2626",
+        "modo": "fifo",
+        "habilitada": true,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z2",
+        "nome": "Atendimento",
+        "cor": "#16a34a",
+        "modo": "fifo",
+        "habilitada": false,
+        "capacidade": null,
+        "servidores": 1
+      },
+      {
+        "id": "z3",
+        "nome": "Mesas",
+        "cor": "#ec4899",
+        "modo": "contagem",
+        "habilitada": false,
+        "capacidade": 120,
+        "servidores": null
+      }
+    ]
+  }
+]
