@@ -27,12 +27,17 @@ const HistoricoApp = {
 
     this.controladorReplay = new ControladorReplay({
       velocidadeInicial: 5,
-      onTick: (t, decorrido, progresso) => {
-        this.atualizarInterfaceReplay(t, decorrido, progresso);
+      onTick: (t, progresso, estado) => {
+        this.atualizarInterfaceReplay(t, progresso, estado);
       },
-      onStatusChange: (tocando) => {
+      onStatusChange: (tocando, vel) => {
         const btn = document.getElementById('btn-play-pause');
         if (btn) btn.textContent = tocando ? '⏸ Pausar' : '▶ Reproduzir';
+        if (vel) {
+          document.querySelectorAll('.btn-speed').forEach(b => {
+            b.classList.toggle('active', b.textContent === `${vel}x`);
+          });
+        }
       },
       onFim: () => {
         const btn = document.getElementById('btn-play-pause');
@@ -53,6 +58,25 @@ const HistoricoApp = {
         this.controladorReplay.finalizarArrasto(frac);
       });
     }
+
+    // Botão Voltar com listener direto além de inline onclick
+    const btnVoltar = document.getElementById('btn-voltar');
+    if (btnVoltar) {
+      btnVoltar.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.voltarParaLista();
+      });
+    }
+
+    // Navegação com histórico do navegador (botão voltar / avançar)
+    window.addEventListener('popstate', (e) => {
+      const sessaoId = (e.state && e.state.sessao) || new URLSearchParams(window.location.search).get('sessao');
+      if (sessaoId) {
+        this.abrirSessao(sessaoId, false);
+      } else {
+        this.voltarParaLista(false);
+      }
+    });
 
     window.addEventListener('keydown', (e) => {
       const tag = (e.target.tagName || '').toLowerCase();
@@ -83,15 +107,22 @@ const HistoricoApp = {
       this.executarAutoDiagnostico();
     }
 
-    await this.carregarListaSessoes();
+    const sessaoInicial = params.get('sessao');
+    if (sessaoInicial) {
+      await this.abrirSessao(sessaoInicial, false);
+    } else {
+      await this.carregarListaSessoes();
+    }
   },
 
   async carregarListaSessoes() {
     const container = document.getElementById('lista-sessoes-container');
-    const mostrarTestes = document.getElementById('chk-mostrar-testes').checked;
+    const chkTestes = document.getElementById('chk-mostrar-testes');
+    const mostrarTestes = chkTestes ? chkTestes.checked : false;
 
     try {
       const resp = await fetch('/api/sessoes');
+      if (!resp.ok) throw new Error(`Falha ao obter lista (status ${resp.status})`);
       let sessoes = await resp.json();
 
       if (!mostrarTestes) {
@@ -99,7 +130,7 @@ const HistoricoApp = {
       }
 
       container.innerHTML = '';
-      if (sessoes.length === 0) {
+      if (!Array.isArray(sessoes) || sessoes.length === 0) {
         container.innerHTML = '<span style="color:var(--text-muted); text-align:center; padding:15px;">Nenhuma sessão encontrada. Inicie uma nova coleta no Painel.</span>';
         return;
       }
@@ -145,28 +176,82 @@ const HistoricoApp = {
     }
   },
 
-  voltarParaLista() {
+  voltarParaLista(atualizarHistorico = true) {
     this.pararReplay();
     if (this.conexaoAoVivo) {
       this.conexaoAoVivo.fechar();
       this.conexaoAoVivo = null;
     }
-    document.getElementById('card-lista-sessoes').style.display = 'block';
-    document.getElementById('detalhes-sessao').style.display = 'none';
+    this.sessaoAtual = null;
+    this.dadosCompletos = null;
+    this.metricasAtuais = null;
+
+    const cardLista = document.getElementById('card-lista-sessoes');
+    const detalhes = document.getElementById('detalhes-sessao');
+    if (cardLista) cardLista.style.display = 'block';
+    if (detalhes) detalhes.style.display = 'none';
+
+    if (atualizarHistorico && typeof window !== 'undefined' && window.history) {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('sessao');
+      window.history.pushState({}, '', url.pathname + (url.search ? url.search : ''));
+    }
+
+    this.carregarListaSessoes();
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   },
 
-  async abrirSessao(id) {
+  async abrirSessao(id, atualizarHistorico = true) {
     try {
       const resp = await fetch(`/api/sessoes/${id}`);
+      if (!resp.ok) {
+        throw new Error(`Sessão não encontrada ou indisponível (HTTP ${resp.status})`);
+      }
       this.dadosCompletos = await resp.json();
-      this.sessaoAtual = this.dadosCompletos.meta;
+      if (!this.dadosCompletos || !this.dadosCompletos.meta) {
+        throw new Error('Formato inválido de dados da sessão.');
+      }
+
+      this.sessaoAtual = this.dadosCompletos.meta || {};
+      if (!Array.isArray(this.sessaoAtual.filasAtivas)) {
+        this.sessaoAtual.filasAtivas = [1];
+      }
+      if (!this.sessaoAtual.config) {
+        this.sessaoAtual.config = {};
+      }
+      if (!Array.isArray(this.dadosCompletos.eventos)) {
+        this.dadosCompletos.eventos = [];
+      }
+      if (!Array.isArray(this.dadosCompletos.conexoes)) {
+        this.dadosCompletos.conexoes = [];
+      }
+
+      // Garante métricas calculadas com segurança
+      if (!this.dadosCompletos.metricas && Array.isArray(this.dadosCompletos.eventos)) {
+        this.dadosCompletos.metricas = calcularMetricas(
+          this.dadosCompletos.eventos,
+          this.sessaoAtual.config,
+          this.sessaoAtual.fimMs || null,
+          this.dadosCompletos.conexoes
+        );
+      }
+      this.metricasAtuais = this.dadosCompletos.metricas || {};
+
       this.excluirSemCobertura = false;
-      document.getElementById('chk-excluir-sem-cobertura').checked = false;
+      const chkCob = document.getElementById('chk-excluir-sem-cobertura');
+      if (chkCob) chkCob.checked = false;
 
-      this.metricasAtuais = this.dadosCompletos.metricas;
+      // Atualiza URL com query string e pushState
+      if (atualizarHistorico && typeof window !== 'undefined' && window.history) {
+        const url = new URL(window.location.href);
+        url.searchParams.set('sessao', id);
+        window.history.pushState({ sessao: id }, '', url.toString());
+      }
 
-      document.getElementById('card-lista-sessoes').style.display = 'none';
-      document.getElementById('detalhes-sessao').style.display = 'flex';
+      const cardLista = document.getElementById('card-lista-sessoes');
+      const detalhes = document.getElementById('detalhes-sessao');
+      if (cardLista) cardLista.style.display = 'none';
+      if (detalhes) detalhes.style.display = 'flex';
 
       // Constrói Abas de Filas
       this.construirAbasFilas();
@@ -186,21 +271,32 @@ const HistoricoApp = {
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } catch (err) {
       alert('Erro ao carregar detalhes da sessão: ' + err.message);
+      this.voltarParaLista(false);
     }
   },
 
   preencherCabecalhoSessao() {
-    const meta = this.sessaoAtual;
-    const metricas = this.metricasAtuais;
+    const meta = this.sessaoAtual || {};
+    const metricas = this.metricasAtuais || {};
 
-    document.getElementById('rel-nome').textContent = meta.nome;
-    document.getElementById('rel-sub').textContent =
-      `${meta.local} • Início: ${formatarHoraLocal(metricas.inicioMs)} • Duração: ${formatarDuracao(metricas.duracaoTotalMs)} (${formatarNumero(metricas.duracaoMin, 1)} min)`;
-    document.getElementById('rel-obs').textContent = meta.observacoes ? `Observações: "${meta.observacoes}"` : '';
+    const elNome = document.getElementById('rel-nome');
+    if (elNome) elNome.textContent = meta.nome || 'Sessão sem nome';
+
+    const elSub = document.getElementById('rel-sub');
+    if (elSub) {
+      const inicioStr = metricas.inicioMs ? formatarHoraLocal(metricas.inicioMs) : '--:--';
+      const durStr = metricas.duracaoTotalMs ? formatarDuracao(metricas.duracaoTotalMs) : '--';
+      const durMin = metricas.duracaoMin !== undefined ? ` (${formatarNumero(metricas.duracaoMin, 1)} min)` : '';
+      elSub.textContent = `${meta.local || 'Local não informado'} • Início: ${inicioStr} • Duração: ${durStr}${durMin}`;
+    }
+
+    const elObs = document.getElementById('rel-obs');
+    if (elObs) elObs.textContent = meta.observacoes ? `Observações: "${meta.observacoes}"` : '';
   },
 
   construirAbasFilas() {
     const nav = document.getElementById('tab-nav-filas');
+    if (!nav) return;
     nav.innerHTML = '<button class="tab-btn active" id="tab-btn-geral" onclick="HistoricoApp.selecionarAba(\'geral\')">Visão Geral</button>';
 
     const ativas = (this.sessaoAtual && this.sessaoAtual.filasAtivas) || [1];
@@ -214,7 +310,7 @@ const HistoricoApp = {
       const btn = document.createElement('button');
       btn.className = 'tab-btn';
       btn.id = `tab-btn-${f}`;
-      const mFila = this.metricasAtuais.filas && this.metricasAtuais.filas[String(f)];
+      const mFila = this.metricasAtuais && this.metricasAtuais.filas && this.metricasAtuais.filas[String(f)];
       const semDados = mFila && mFila.semDados;
 
       btn.innerHTML = `${nomes[f] || `Fila ${f}`} ${semDados ? '<span class="badge-sem-dados">Sem dados</span>' : ''}`;
@@ -236,33 +332,34 @@ const HistoricoApp = {
     const secFila = document.getElementById('aba-fila-detalhe');
 
     if (aba === 'geral') {
-      secGeral.style.display = 'flex';
-      secFila.style.display = 'none';
+      if (secGeral) secGeral.style.display = 'flex';
+      if (secFila) secFila.style.display = 'none';
       this.renderizarVisaoGeral();
     } else {
-      secGeral.style.display = 'none';
-      secFila.style.display = 'flex';
+      if (secGeral) secGeral.style.display = 'none';
+      if (secFila) secFila.style.display = 'flex';
       this.renderizarDetalheFila(aba);
     }
   },
 
   toggleExcluirSemCobertura() {
-    this.excluirSemCobertura = document.getElementById('chk-excluir-sem-cobertura').checked;
+    const chk = document.getElementById('chk-excluir-sem-cobertura');
+    this.excluirSemCobertura = chk ? chk.checked : false;
 
-    // Recalcula métricas
+    // Recalcula métricas com os argumentos na ordem correta
     this.metricasAtuais = calcularMetricas(
-      this.dadosCompletos.eventos,
-      this.dadosCompletos.metricas.duracaoTotalMs,
-      this.dadosCompletos.meta.config,
-      this.dadosCompletos.conexoes,
-      { excluirSemCobertura: this.excluirSemCobertura }
+      this.dadosCompletos?.eventos || [],
+      this.dadosCompletos?.meta?.config || {},
+      this.dadosCompletos?.meta?.fimMs || null,
+      this.dadosCompletos?.conexoes || [],
+      { excluirPeriodosSemCobertura: this.excluirSemCobertura }
     );
 
     const lblAviso = document.getElementById('lbl-aviso-cobertura');
     if (this.excluirSemCobertura) {
-      lblAviso.textContent = 'ℹ️ Intervalos sem cobertura excluídos dos cálculos.';
+      if (lblAviso) lblAviso.textContent = 'ℹ️ Intervalos sem cobertura excluídos dos cálculos.';
     } else {
-      lblAviso.textContent = '';
+      if (lblAviso) lblAviso.textContent = '';
     }
 
     this.construirAbasFilas();
@@ -282,7 +379,7 @@ const HistoricoApp = {
     };
 
     ativas.forEach(f => {
-      const mFila = (this.metricasAtuais.filas && this.metricasAtuais.filas[String(f)]) || this.metricasAtuais;
+      const mFila = (this.metricasAtuais && this.metricasAtuais.filas && this.metricasAtuais.filas[String(f)]) || this.metricasAtuais || {};
       const cfg = nomes[f] || { titulo: `Fila ${f}`, cor: 'var(--primary)' };
 
       const card = document.createElement('div');
@@ -298,27 +395,35 @@ const HistoricoApp = {
           <p style="font-size:0.85rem; color:var(--text-muted); padding:10px 0;">Nenhum evento registrado nesta fila durante a sessão.</p>
         `;
       } else {
+        const cobPerc = mFila.cobertura?.percentual ?? 100;
+        const cheg = mFila.n_chegadas ?? 0;
+        const atend = mFila.n_atendimentos ?? 0;
+        const vazao = mFila.vazaoGlobalPorMin ?? 0;
+        const filaMedia = mFila.filaTempo?.mediaPonderada ?? 0;
+        const filaMax = mFila.filaTempo?.max ?? 0;
+        const espMedia = (mFila.statsEspera?.media ?? 0) * 1000;
+
         card.innerHTML = `
           <div class="card-title">
             <span style="color:${cfg.cor}; font-weight:800;">${cfg.titulo}</span>
-            <span style="font-size:0.75rem; color:var(--text-muted);">Cobertura: ${formatarNumero(mFila.cobertura.percentual, 1)}%</span>
+            <span style="font-size:0.75rem; color:var(--text-muted);">Cobertura: ${formatarNumero(cobPerc, 1)}%</span>
           </div>
           <div style="display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; margin-top:6px;">
             <div class="hud-stat" style="padding:6px 10px;">
               <span class="label">Chegadas / Passagens</span>
-              <span class="value" style="font-size:1.1rem;">${mFila.n_chegadas} / ${mFila.n_atendimentos}</span>
+              <span class="value" style="font-size:1.1rem;">${cheg} / ${atend}</span>
             </div>
             <div class="hud-stat" style="padding:6px 10px;">
               <span class="label">Vazão Global</span>
-              <span class="value" style="font-size:1.1rem;">${formatarNumero(mFila.vazaoGlobalPorMin, 2)} p/m</span>
+              <span class="value" style="font-size:1.1rem;">${formatarNumero(vazao, 2)} p/m</span>
             </div>
             <div class="hud-stat" style="padding:6px 10px;">
               <span class="label">Fila Média (L) / Pico</span>
-              <span class="value" style="font-size:1.1rem;">${formatarNumero(mFila.filaTempo.mediaPonderada, 1)} / ${mFila.filaTempo.max}</span>
+              <span class="value" style="font-size:1.1rem;">${formatarNumero(filaMedia, 1)} / ${filaMax}</span>
             </div>
             <div class="hud-stat" style="padding:6px 10px;">
               <span class="label">Espera Média</span>
-              <span class="value" style="font-size:1.1rem;">${formatarDuracao(mFila.statsEspera.media * 1000).substring(3)}</span>
+              <span class="value" style="font-size:1.1rem;">${formatarDuracao(espMedia).substring(3)}</span>
             </div>
           </div>
           <div style="margin-top:10px; display:flex; justify-content:flex-end;">
@@ -331,15 +436,19 @@ const HistoricoApp = {
 
     // Card de Trânsito até as Mesas (Fila 1 + Fila 2)
     const cardTransito = document.getElementById('card-transito-mesas');
-    if (this.metricasAtuais.transitoMesas && this.metricasAtuais.transitoMesas.count > 0) {
-      cardTransito.style.display = 'block';
+    if (this.metricasAtuais?.transitoMesas && this.metricasAtuais.transitoMesas.count > 0) {
+      if (cardTransito) cardTransito.style.display = 'block';
       const tm = this.metricasAtuais.transitoMesas;
-      document.getElementById('tm-count').textContent = tm.count;
-      document.getElementById('tm-media').textContent = formatarDuracao(tm.mediaSeg * 1000).substring(3);
-      document.getElementById('tm-mediana').textContent = formatarDuracao(tm.medianaSeg * 1000).substring(3);
-      document.getElementById('tm-p90').textContent = formatarDuracao(tm.p90Seg * 1000).substring(3);
+      const countEl = document.getElementById('tm-count');
+      const medEl = document.getElementById('tm-media');
+      const medianaEl = document.getElementById('tm-mediana');
+      const p90El = document.getElementById('tm-p90');
+      if (countEl) countEl.textContent = tm.count;
+      if (medEl) medEl.textContent = formatarDuracao(tm.mediaSeg * 1000).substring(3);
+      if (medianaEl) medianaEl.textContent = formatarDuracao(tm.medianaSeg * 1000).substring(3);
+      if (p90El) p90El.textContent = formatarDuracao(tm.p90Seg * 1000).substring(3);
     } else {
-      cardTransito.style.display = 'none';
+      if (cardTransito) cardTransito.style.display = 'none';
     }
 
     // Gráfico Comparativo das Filas no Tempo
@@ -347,113 +456,145 @@ const HistoricoApp = {
   },
 
   renderizarDetalheFila(filaNum) {
-    const mFila = (this.metricasAtuais.filas && this.metricasAtuais.filas[String(filaNum)]) || this.metricasAtuais;
+    const mFila = (this.metricasAtuais && this.metricasAtuais.filas && this.metricasAtuais.filas[String(filaNum)]) || this.metricasAtuais || {};
     const boxSemDados = document.getElementById('box-sem-dados');
     const containerKpis = document.getElementById('container-kpis-fila');
 
+    const toggleSection = (id, show) => {
+      const el = document.getElementById(id);
+      if (el && el.parentElement) el.parentElement.style.display = show ? 'block' : 'none';
+    };
+
     if (mFila.semDados) {
-      boxSemDados.style.display = 'block';
-      containerKpis.style.display = 'none';
-      document.getElementById('box-ociosidade-segmentada').parentElement.style.display = 'none';
-      document.getElementById('box-cobertura-info').parentElement.style.display = 'none';
-      document.getElementById('box-little-info').parentElement.style.display = 'none';
-      document.getElementById('box-teorico-info').parentElement.style.display = 'none';
-      document.getElementById('tabela-blocos-corpo').parentElement.parentElement.parentElement.style.display = 'none';
-      document.getElementById('chart-acumulado').parentElement.style.display = 'none';
-      document.getElementById('chart-blocos').parentElement.style.display = 'none';
-      document.getElementById('chart-histograma').parentElement.style.display = 'none';
+      if (boxSemDados) boxSemDados.style.display = 'block';
+      if (containerKpis) containerKpis.style.display = 'none';
+      toggleSection('box-ociosidade-segmentada', false);
+      toggleSection('box-cobertura-info', false);
+      toggleSection('box-little-info', false);
+      toggleSection('box-teorico-info', false);
+      const tblB = document.getElementById('tabela-blocos-corpo');
+      if (tblB && tblB.parentElement?.parentElement?.parentElement) {
+        tblB.parentElement.parentElement.parentElement.style.display = 'none';
+      }
+      toggleSection('chart-acumulado', false);
+      toggleSection('chart-blocos', false);
+      toggleSection('chart-histograma', false);
       return;
     }
 
-    boxSemDados.style.display = 'none';
-    containerKpis.style.display = 'grid';
-    document.getElementById('box-ociosidade-segmentada').parentElement.style.display = 'block';
-    document.getElementById('box-cobertura-info').parentElement.style.display = 'block';
-    document.getElementById('box-little-info').parentElement.style.display = 'block';
-    document.getElementById('box-teorico-info').parentElement.style.display = 'block';
-    document.getElementById('tabela-blocos-corpo').parentElement.parentElement.parentElement.style.display = 'block';
-    document.getElementById('chart-acumulado').parentElement.style.display = 'block';
-    document.getElementById('chart-blocos').parentElement.style.display = 'block';
-    document.getElementById('chart-histograma').parentElement.style.display = 'block';
+    if (boxSemDados) boxSemDados.style.display = 'none';
+    if (containerKpis) containerKpis.style.display = 'grid';
+    toggleSection('box-ociosidade-segmentada', true);
+    toggleSection('box-cobertura-info', true);
+    toggleSection('box-little-info', true);
+    toggleSection('box-teorico-info', true);
+    const tblB = document.getElementById('tabela-blocos-corpo');
+    if (tblB && tblB.parentElement?.parentElement?.parentElement) {
+      tblB.parentElement.parentElement.parentElement.style.display = 'block';
+    }
+    toggleSection('chart-acumulado', true);
+    toggleSection('chart-blocos', true);
+    toggleSection('chart-histograma', true);
 
     // KPIs
-    document.getElementById('kpi-f-cheg').textContent = mFila.n_chegadas;
-    document.getElementById('kpi-f-lambda').textContent = `λ = ${formatarNumero(mFila.lambda, 2)} p/min`;
-    document.getElementById('kpi-f-atend').textContent = mFila.n_atendimentos;
-    document.getElementById('kpi-f-vazao').textContent = `Vazão = ${formatarNumero(mFila.vazaoGlobalPorMin, 2)} p/min`;
-    document.getElementById('kpi-f-util').textContent = `${formatarNumero(mFila.utilizacao * 100, 1)}%`;
-    document.getElementById('kpi-f-mu').textContent = `μ = ${formatarNumero(mFila.muPorServidor, 2)} p/min`;
+    const setTxt = (id, txt) => {
+      const el = document.getElementById(id);
+      if (el) el.textContent = txt;
+    };
 
-    document.getElementById('kpi-f-l').textContent = formatarNumero(mFila.filaTempo.mediaPonderada, 1);
-    document.getElementById('kpi-f-pico').textContent = `Pico: ${mFila.filaTempo.max} (${formatarHoraLocal(mFila.filaTempo.instanteMaxMs)})`;
+    setTxt('kpi-f-cheg', mFila.n_chegadas ?? 0);
+    setTxt('kpi-f-lambda', `λ = ${formatarNumero(mFila.lambda ?? 0, 2)} p/min`);
+    setTxt('kpi-f-atend', mFila.n_atendimentos ?? 0);
+    setTxt('kpi-f-vazao', `Vazão = ${formatarNumero(mFila.vazaoGlobalPorMin ?? 0, 2)} p/min`);
+    setTxt('kpi-f-util', `${formatarNumero((mFila.utilizacao ?? 0) * 100, 1)}%`);
+    setTxt('kpi-f-mu', `μ = ${formatarNumero(mFila.muPorServidor ?? 0, 2)} p/min`);
 
-    document.getElementById('kpi-f-esp-media').textContent = formatarDuracao(mFila.statsEspera.media * 1000).substring(3);
-    document.getElementById('kpi-f-esp-mediana').textContent = `Mediana: ${formatarDuracao(mFila.statsEspera.mediana * 1000).substring(3)}`;
-    document.getElementById('kpi-f-esp-p95').textContent = formatarDuracao(mFila.statsEspera.p95 * 1000).substring(3);
-    document.getElementById('kpi-f-esp-p90').textContent = `P90: ${formatarDuracao(mFila.statsEspera.p90 * 1000).substring(3)}`;
+    const ft = mFila.filaTempo || {};
+    setTxt('kpi-f-l', formatarNumero(ft.mediaPonderada ?? 0, 1));
+    const instPicoStr = ft.instanteMaxMs ? ` (${formatarHoraLocal(ft.instanteMaxMs)})` : '';
+    setTxt('kpi-f-pico', `Pico: ${ft.max ?? 0}${instPicoStr}`);
 
-    document.getElementById('kpi-f-int-media').textContent = `${formatarNumero(mFila.statsIntervalosAtend.media, 1)} s`;
-    document.getElementById('kpi-f-int-cv').textContent = `CV: ${formatarNumero(mFila.statsIntervalosAtend.cv, 2)}`;
+    const se = mFila.statsEspera || {};
+    setTxt('kpi-f-esp-media', formatarDuracao((se.media ?? 0) * 1000).substring(3));
+    setTxt('kpi-f-esp-mediana', `Mediana: ${formatarDuracao((se.mediana ?? 0) * 1000).substring(3)}`);
+    setTxt('kpi-f-esp-p95', formatarDuracao((se.p95 ?? 0) * 1000).substring(3));
+    setTxt('kpi-f-esp-p90', `P90: ${formatarDuracao((se.p90 ?? 0) * 1000).substring(3)}`);
 
-    document.getElementById('kpi-f-cobertura').textContent = `${formatarNumero(mFila.cobertura.percentual, 1)}%`;
-    document.getElementById('kpi-f-lacunas').textContent = `${mFila.cobertura.intervalosSemCobertura.length} lacunas`;
+    const si = mFila.statsIntervalosAtend || {};
+    setTxt('kpi-f-int-media', `${formatarNumero(si.media ?? 0, 1)} s`);
+    setTxt('kpi-f-int-cv', `CV: ${formatarNumero(si.cv ?? 0, 2)}`);
+
+    const cob = mFila.cobertura || { percentual: 100, intervalosSemCobertura: [], aparelhosDistintos: [], tempoComCoberturaSeg: 0, tempoSemCoberturaSeg: 0 };
+    setTxt('kpi-f-cobertura', `${formatarNumero(cob.percentual ?? 100, 1)}%`);
+    setTxt('kpi-f-lacunas', `${(cob.intervalosSemCobertura || []).length} lacunas`);
 
     // Ociosidade Segmentada
-    const oc = mFila.ociosidade;
-    const det = oc.detalhe;
-    document.getElementById('box-ociosidade-segmentada').innerHTML = `
-      <p>• <strong>(a) Serviço parado (com fila aguardando):</strong> ${formatarDuracao(det.servicoParadoSeg * 1000)} (${formatarNumero(det.percServicoParado, 1)}%)</p>
-      <p>• <strong>(b) Sem demanda (serviço livre, fila vazia):</strong> ${formatarDuracao(det.semDemandaSeg * 1000)} (${formatarNumero(det.percSemDemanda, 1)}%)</p>
-      <p>• <strong>(c) Sem cobertura (sem celulares na área):</strong> ${formatarDuracao(det.semCoberturaSeg * 1000)} (${formatarNumero(det.percSemCobertura, 1)}%)</p>
-      <p style="margin-top:6px; color:var(--text-muted); font-size:0.8rem;">
-        Total de pausas longas (> ${this.sessaoAtual.config.limiarPausaSeg || 60}s): <strong>${oc.qtdPausas}</strong>
-      </p>
-    `;
+    const oc = mFila.ociosidade || { detalhe: {}, qtdPausas: 0 };
+    const det = oc.detalhe || {};
+    const boxOc = document.getElementById('box-ociosidade-segmentada');
+    if (boxOc) {
+      boxOc.innerHTML = `
+        <p>• <strong>(a) Serviço parado (com fila aguardando):</strong> ${formatarDuracao((det.servicoParadoSeg || 0) * 1000)} (${formatarNumero(det.percServicoParado || 0, 1)}%)</p>
+        <p>• <strong>(b) Sem demanda (serviço livre, fila vazia):</strong> ${formatarDuracao((det.semDemandaSeg || 0) * 1000)} (${formatarNumero(det.percSemDemanda || 0, 1)}%)</p>
+        <p>• <strong>(c) Sem cobertura (sem celulares na área):</strong> ${formatarDuracao((det.semCoberturaSeg || 0) * 1000)} (${formatarNumero(det.percSemCobertura || 0, 1)}%)</p>
+        <p style="margin-top:6px; color:var(--text-muted); font-size:0.8rem;">
+          Total de pausas longas (> ${this.sessaoAtual?.config?.limiarPausaSeg || 60}s): <strong>${oc.qtdPausas || 0}</strong>
+        </p>
+      `;
+    }
 
     // Cobertura da Equipe & Lacunas
-    const cob = mFila.cobertura;
     let lacunasHtml = '';
-    if (cob.intervalosSemCobertura.length === 0) {
+    const lacunas = cob.intervalosSemCobertura || [];
+    if (lacunas.length === 0) {
       lacunasHtml = '<span style="color:var(--success); font-weight:700;">✅ Nenhuma lacuna sem cobertura registrada.</span>';
     } else {
       lacunasHtml = '<div style="margin-top:4px;"><strong>Lacunas identificadas:</strong><ul style="padding-left:18px; margin-top:2px;">';
-      cob.intervalosSemCobertura.forEach(lac => {
+      lacunas.forEach(lac => {
         lacunasHtml += `<li>${formatarHoraLocal(lac.inicioMs)} até ${formatarHoraLocal(lac.fimMs)} (${formatarDuracao(lac.duracaoSeg * 1000)})</li>`;
       });
       lacunasHtml += '</ul></div>';
     }
 
-    document.getElementById('box-cobertura-info').innerHTML = `
-      <p>• Percentual com Cobertura: <strong>${formatarNumero(cob.percentual, 1)}%</strong> (${formatarDuracao(cob.tempoComCoberturaSeg * 1000)})</p>
-      <p>• Tempo Descoberto: <strong>${formatarDuracao(cob.tempoSemCoberturaSeg * 1000)}</strong></p>
-      <p>• Aparelhos que cobriram esta fila: <strong>${cob.aparelhosDistintos.length}</strong> (${cob.aparelhosDistintos.join(', ') || 'Nenhum'})</p>
-      ${lacunasHtml}
-    `;
+    const boxCob = document.getElementById('box-cobertura-info');
+    if (boxCob) {
+      boxCob.innerHTML = `
+        <p>• Percentual com Cobertura: <strong>${formatarNumero(cob.percentual ?? 100, 1)}%</strong> (${formatarDuracao((cob.tempoComCoberturaSeg || 0) * 1000)})</p>
+        <p>• Tempo Descoberto: <strong>${formatarDuracao((cob.tempoSemCoberturaSeg || 0) * 1000)}</strong></p>
+        <p>• Aparelhos que cobriram esta fila: <strong>${(cob.aparelhosDistintos || []).length}</strong> (${(cob.aparelhosDistintos || []).join(', ') || 'Nenhum'})</p>
+        ${lacunasHtml}
+      `;
+    }
 
     // Lei de Little
-    const l = mFila.little;
-    document.getElementById('box-little-info').innerHTML = `
-      <p>• Comprimento Médio Observado (L): <strong>${formatarNumero(l.L_observado, 2)} pessoas</strong></p>
-      <p>• Produto λ · W: <strong>${formatarNumero(l.L_calculado_lambda_W, 2)} pessoas</strong></p>
-      <p>• Discrepância Percentual: <strong>${formatarNumero(l.diffPerc, 1)}%</strong> ${l.consistente ? '✅ (Consistente)' : '⚠️ (Diferença esperada em períodos finitos)'}</p>
-    `;
+    const l = mFila.little || {};
+    const boxLittle = document.getElementById('box-little-info');
+    if (boxLittle) {
+      boxLittle.innerHTML = `
+        <p>• Comprimento Médio Observado (L): <strong>${formatarNumero(l.L_observado ?? 0, 2)} pessoas</strong></p>
+        <p>• Produto λ · W: <strong>${formatarNumero(l.L_calculado_lambda_W ?? 0, 2)} pessoas</strong></p>
+        <p>• Discrepância Percentual: <strong>${formatarNumero(l.diffPerc ?? 0, 1)}%</strong> ${l.consistente ? '✅ (Consistente)' : '⚠️ (Diferença esperada em períodos finitos)'}</p>
+      `;
+    }
 
     // Modelo Teórico
-    const teo = mFila.teorico;
+    const teo = mFila.teorico || {};
     const boxTeo = document.getElementById('box-teorico-info');
-    if (teo.aplicavel) {
-      boxTeo.innerHTML = `
-        <p>• Servidores: <strong>c = ${teo.c}</strong> • Intensidade: <strong>a = ${formatarNumero(teo.a, 2)} Erlangs</strong></p>
-        <p>• Fila Teórica (Lq): <strong>${formatarNumero(teo.Lq, 2)} pessoas</strong> (Obs: ${formatarNumero(mFila.filaTempo.mediaPonderada, 2)})</p>
-        <p>• Espera Teórica (Wq): <strong>${formatarDuracao(teo.Wq_seg * 1000).substring(3)}</strong> (Obs: ${formatarDuracao(mFila.statsEspera.media * 1000).substring(3)})</p>
-        <p>• Probabilidade de Espera P(W>0): <strong>${formatarNumero(teo.P_espera * 100, 1)}%</strong></p>
-      `;
-    } else {
-      boxTeo.innerHTML = `<span style="color:var(--warning)">⚠️ ${teo.motivo}</span>`;
+    if (boxTeo) {
+      if (teo.aplicavel) {
+        boxTeo.innerHTML = `
+          <p>• Servidores: <strong>c = ${teo.c}</strong> • Intensidade: <strong>a = ${formatarNumero(teo.a ?? 0, 2)} Erlangs</strong></p>
+          <p>• Fila Teórica (Lq): <strong>${formatarNumero(teo.Lq ?? 0, 2)} pessoas</strong> (Obs: ${formatarNumero(ft.mediaPonderada ?? 0, 2)})</p>
+          <p>• Espera Teórica (Wq): <strong>${formatarDuracao((teo.Wq_seg || 0) * 1000).substring(3)}</strong> (Obs: ${formatarDuracao((se.media || 0) * 1000).substring(3)})</p>
+          <p>• Probabilidade de Espera P(W>0): <strong>${formatarNumero((teo.P_espera || 0) * 100, 1)}%</strong></p>
+        `;
+      } else {
+        boxTeo.innerHTML = `<span style="color:var(--warning)">⚠️ ${teo.motivo || 'Modelo teórico não aplicável'}</span>`;
+      }
     }
 
     // Tabela de Blocos
-    this.renderizarTabelaBlocos(mFila.vazaoBlocos.blocos);
+    this.renderizarTabelaBlocos(mFila.vazaoBlocos?.blocos || []);
 
     // Gráficos da Fila
     this.renderizarGraficosFila(mFila);
@@ -461,6 +602,7 @@ const HistoricoApp = {
 
   renderizarTabelaBlocos(blocos = []) {
     const corpo = document.getElementById('tabela-blocos-corpo');
+    if (!corpo) return;
     corpo.innerHTML = '';
 
     if (blocos.length === 0) {
@@ -489,26 +631,34 @@ const HistoricoApp = {
      PLAYER DE REPRODUÇÃO DA FILA (ESBOÇO 960x660)
      ========================================================================== */
   iniciarPlayerReplay(eventos) {
-    if (!eventos || eventos.length === 0) return;
+    if (!this.controladorReplay) return;
+    if (!Array.isArray(eventos) || eventos.length === 0) {
+      this.controladorReplay.carregar([], this.sessaoAtual?.config);
+      const durEl = document.getElementById('lbl-tempo-total-replay');
+      if (durEl) durEl.textContent = '00:00';
+      const lblTempo = document.getElementById('lbl-tempo-replay');
+      if (lblTempo) lblTempo.textContent = '00:00';
+      return;
+    }
 
-    this.pararReplay();
+    this.controladorReplay.carregar(eventos, this.sessaoAtual?.config);
 
-    this.replay.tInicio = eventos[0].t;
-    this.replay.tFim = eventos[eventos.length - 1].t;
-    this.replay.duracaoTotal = Math.max(1000, this.replay.tFim - this.replay.tInicio);
-    this.replay.tAtual = this.replay.tInicio;
-
-    document.getElementById('lbl-tempo-total-replay').textContent = formatarDuracao(this.replay.duracaoTotal).substring(3);
+    const durTotal = this.controladorReplay.duracaoTotalMs;
+    const durEl = document.getElementById('lbl-tempo-total-replay');
+    if (durEl) durEl.textContent = formatarDuracao(durTotal).substring(3);
 
     this.criarMarcadoresTimeline(eventos);
-    this.atualizarInstanteReplay(this.replay.tInicio);
+    this.controladorReplay.reiniciar();
   },
 
   criarMarcadoresTimeline(eventos) {
     const box = document.getElementById('box-markers-timeline');
+    if (!box) return;
     box.innerHTML = '';
 
-    const durTotal = this.replay.duracaoTotal;
+    if (!this.controladorReplay || this.controladorReplay.duracaoTotalMs <= 0) return;
+    const durTotal = this.controladorReplay.duracaoTotalMs;
+    const tInicio = this.controladorReplay.tInicio;
 
     eventos.forEach(ev => {
       let icone = null;
@@ -532,7 +682,7 @@ const HistoricoApp = {
       }
 
       if (icone) {
-        const perc = Math.min(100, Math.max(0, ((ev.t - this.replay.tInicio) / durTotal) * 100));
+        const perc = Math.min(100, Math.max(0, ((ev.t - tInicio) / durTotal) * 100));
         const pin = document.createElement('span');
         pin.className = 'marker-pin';
         pin.style.left = `${perc}%`;
@@ -545,98 +695,264 @@ const HistoricoApp = {
   },
 
   saltarParaInstante(t) {
-    this.replay.tAtual = Math.max(this.replay.tInicio, Math.min(this.replay.tFim, t));
-    const perc = ((this.replay.tAtual - this.replay.tInicio) / this.replay.duracaoTotal) * 1000;
-    document.getElementById('slider-timeline').value = perc;
-    this.atualizarInstanteReplay(this.replay.tAtual);
+    if (this.controladorReplay) {
+      this.controladorReplay.saltarPara(t);
+    }
   },
 
   onSliderScrub(sliderVal) {
-    const frac = sliderVal / 1000;
-    const t = this.replay.tInicio + frac * this.replay.duracaoTotal;
-    this.replay.tAtual = t;
-    this.atualizarInstanteReplay(t);
+    if (this.controladorReplay) {
+      const frac = parseFloat(sliderVal) / 1000;
+      this.controladorReplay.definirProgresso(frac);
+    }
   },
 
-  atualizarInstanteReplay(t) {
-    const decorrido = Math.max(0, t - this.replay.tInicio);
-    document.getElementById('lbl-tempo-replay').textContent = formatarDuracao(decorrido).substring(3);
+  atualizarInterfaceReplay(t, progresso, estado) {
+    if (!this.controladorReplay) return;
 
-    // Derivação pura do estado a partir do início até o instante t
-    const estado = derivarEstado(this.dadosCompletos.eventos, t);
+    const decorrido = Math.max(0, t - this.controladorReplay.tInicio);
+    const lblTempo = document.getElementById('lbl-tempo-replay');
+    if (lblTempo) lblTempo.textContent = formatarDuracao(decorrido).substring(3);
+
+    const slider = document.getElementById('slider-timeline');
+    if (slider && !this.controladorReplay.arrastando) {
+      slider.value = Math.round(progresso * 1000);
+    }
+
+    if (!estado) {
+      estado = derivarEstado(this.dadosCompletos?.eventos || [], t, this.sessaoAtual?.config);
+    }
 
     // Atualiza contadores sincronizados
     const f1 = (estado.filas && estado.filas['1']) ? estado.filas['1'].fila.length : (estado.fila ? estado.fila.length : 0);
     const f2 = (estado.filas && estado.filas['2']) ? estado.filas['2'].fila.length : 0;
     const f3 = (estado.filas && estado.filas['3']) ? estado.filas['3'].fila.length : 0;
 
-    document.getElementById('rep-f1').textContent = f1;
-    document.getElementById('rep-f2').textContent = f2;
-    document.getElementById('rep-f3').textContent = f3;
+    const elF1 = document.getElementById('rep-f1');
+    if (elF1) elF1.textContent = f1;
+    const elF2 = document.getElementById('rep-f2');
+    if (elF2) elF2.textContent = f2;
+    const elF3 = document.getElementById('rep-f3');
+    if (elF3) elF3.textContent = f3;
 
     let totalAtendidas = 0;
     if (estado.filas) {
       Object.values(estado.filas).forEach(f => { totalAtendidas += (f.atendidas || 0); });
-    } else {
-      totalAtendidas = estado.contadores.atendidas;
+    } else if (estado.contadores) {
+      totalAtendidas = estado.contadores.atendidas || 0;
     }
 
-    document.getElementById('rep-atendidos').textContent = totalAtendidas;
-    document.getElementById('rep-vazao').textContent = formatarNumero(estado.vazaoRecente, 1);
+    const elAtend = document.getElementById('rep-atendidos');
+    if (elAtend) elAtend.textContent = totalAtendidas;
+    const elVaz = document.getElementById('rep-vazao');
+    if (elVaz) elVaz.textContent = formatarNumero(estado.vazaoRecente || 0, 1);
 
     if (this.animador) {
       this.animador.renderizarEstado(estado, false);
     }
   },
 
-  togglePlayPause() {
-    if (this.replay.ativo) {
-      this.pararReplay();
-    } else {
-      this.iniciarLoopReplay();
-    }
+  atualizarInstanteReplay(t) {
+    this.saltarParaInstante(t);
   },
 
-  iniciarLoopReplay() {
-    this.replay.ativo = true;
-    document.getElementById('btn-play-pause').textContent = '⏸ Pausar';
-
-    const intervaloMs = 100;
-    this.replay.timer = setInterval(() => {
-      const avancoMs = intervaloMs * this.replay.velocidade;
-      this.replay.tAtual += avancoMs;
-
-      if (this.replay.tAtual >= this.replay.tFim) {
-        this.replay.tAtual = this.replay.tFim;
-        this.pararReplay();
-      }
-
-      const perc = ((this.replay.tAtual - this.replay.tInicio) / this.replay.duracaoTotal) * 1000;
-      document.getElementById('slider-timeline').value = perc;
-      this.atualizarInstanteReplay(this.replay.tAtual);
-    }, intervaloMs);
+  togglePlayPause() {
+    if (this.controladorReplay) {
+      this.controladorReplay.alternar();
+    }
   },
 
   pararReplay() {
-    this.replay.ativo = false;
-    if (this.replay.timer) {
-      clearInterval(this.replay.timer);
-      this.replay.timer = null;
+    if (this.controladorReplay) {
+      this.controladorReplay.pausar();
     }
-    const btn = document.getElementById('btn-play-pause');
-    if (btn) btn.textContent = '▶ Reproduzir';
   },
 
   reiniciarReplay() {
-    this.pararReplay();
-    this.saltarParaInstante(this.replay.tInicio);
+    if (this.controladorReplay) {
+      this.controladorReplay.reiniciar();
+    }
   },
 
   setVelocidade(v) {
-    this.replay.velocidade = v;
-    document.querySelectorAll('.btn-speed').forEach(b => {
-      b.classList.toggle('active', b.textContent === `${v}x`);
-    });
+    if (this.controladorReplay) {
+      this.controladorReplay.definirVelocidade(v);
+    }
+  },
+
+  ajustarMapa() {
+    if (this.animador) this.animador.alternarAjustarTela();
+  },
+
+  telaCheiaMapa() {
+    if (this.animador) this.animador.alternarTelaCheia();
+  },
+
+  iniciarConexaoAoVivo(id) {
+    if (this.conexaoAoVivo) {
+      this.conexaoAoVivo.fechar();
+      this.conexaoAoVivo = null;
+    }
+
+    try {
+      this.conexaoAoVivo = new GerenciadorConexao({
+        papel: 'painel',
+        onNovoEvento: (evento, estado) => {
+          if (this.dadosCompletos && Array.isArray(this.dadosCompletos.eventos)) {
+            this.dadosCompletos.eventos.push(evento);
+            if (this.controladorReplay && !this.controladorReplay.tocando) {
+              this.controladorReplay.carregar(this.dadosCompletos.eventos, this.sessaoAtual?.config);
+            }
+          }
+        }
+      });
+      this.conexaoAoVivo.conectar();
+    } catch (e) {
+      console.warn('Não foi possível conectar ao vivo no histórico:', e);
+    }
+  },
+
+  async abrirModalPin() {
+    const modal = document.getElementById('modal-config-pin');
+    const erroEl = document.getElementById('pin-feedback-erro');
+    const sucessoEl = document.getElementById('pin-feedback-sucesso');
+    const avisoFixo = document.getElementById('pin-aviso-fixo');
+    const pinAtual = document.getElementById('pin-atual');
+    const pinNovo = document.getElementById('pin-novo');
+    const pinConfirma = document.getElementById('pin-confirma');
+    const btnSalvar = document.getElementById('btn-salvar-pin');
+    const btnRestaurar = document.getElementById('btn-restaurar-pin');
+    const chkDesconectar = document.getElementById('chk-desconectar-aparelhos');
+
+    if (erroEl) erroEl.style.display = 'none';
+    if (sucessoEl) sucessoEl.style.display = 'none';
+    if (pinNovo) pinNovo.value = '';
+    if (pinConfirma) pinConfirma.value = '';
+    if (chkDesconectar) chkDesconectar.checked = false;
+
+    try {
+      const resp = await fetch('/api/config/pin');
+      if (resp.status === 403) {
+        if (erroEl) {
+          erroEl.textContent = 'Acesso restrito ao computador local (notebook).';
+          erroEl.style.display = 'block';
+        }
+        return;
+      }
+      const data = await resp.json();
+      if (pinAtual) pinAtual.value = data.pin || '****';
+      if (data.fixoPorParametro) {
+        if (avisoFixo) avisoFixo.style.display = 'block';
+        if (pinNovo) pinNovo.disabled = true;
+        if (pinConfirma) pinConfirma.disabled = true;
+        if (btnSalvar) btnSalvar.disabled = true;
+        if (btnRestaurar) btnRestaurar.disabled = true;
+        if (chkDesconectar) chkDesconectar.disabled = true;
+      } else {
+        if (avisoFixo) avisoFixo.style.display = 'none';
+        if (pinNovo) pinNovo.disabled = false;
+        if (pinConfirma) pinConfirma.disabled = false;
+        if (btnSalvar) btnSalvar.disabled = false;
+        if (btnRestaurar) btnRestaurar.disabled = false;
+        if (chkDesconectar) chkDesconectar.disabled = false;
+      }
+    } catch (e) {
+      if (pinAtual) pinAtual.value = '1234';
+    }
+
+    if (modal) modal.classList.add('open');
+  },
+
+  fecharModalPin() {
+    const modal = document.getElementById('modal-config-pin');
+    if (modal) modal.classList.remove('open');
+  },
+
+  toggleVerPin(id) {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.type = el.type === 'password' ? 'text' : 'password';
+  },
+
+  restaurarPinPadrao() {
+    const pN = document.getElementById('pin-novo');
+    const pC = document.getElementById('pin-confirma');
+    if (pN) pN.value = '1234';
+    if (pC) pC.value = '1234';
+  },
+
+  async salvarNovoPin() {
+    const erroEl = document.getElementById('pin-feedback-erro');
+    const sucessoEl = document.getElementById('pin-feedback-sucesso');
+    const pinAtual = document.getElementById('pin-atual')?.value;
+    const pinNovo = document.getElementById('pin-novo')?.value.trim();
+    const pinConfirma = document.getElementById('pin-confirma')?.value.trim();
+    const desconectarOutros = document.getElementById('chk-desconectar-aparelhos')?.checked;
+
+    if (erroEl) erroEl.style.display = 'none';
+    if (sucessoEl) sucessoEl.style.display = 'none';
+
+    if (!pinNovo || !pinConfirma) {
+      if (erroEl) {
+        erroEl.textContent = 'Por favor, preencha todos os campos.';
+        erroEl.style.display = 'block';
+      }
+      return;
+    }
+
+    if (!/^\d{4,8}$/.test(pinNovo)) {
+      if (erroEl) {
+        erroEl.textContent = 'A nova senha deve ter entre 4 e 8 dígitos numéricos.';
+        erroEl.style.display = 'block';
+      }
+      return;
+    }
+
+    if (pinNovo !== pinConfirma) {
+      if (erroEl) {
+        erroEl.textContent = 'A confirmação não coincide com a nova senha.';
+        erroEl.style.display = 'block';
+      }
+      return;
+    }
+
+    if (pinAtual && pinNovo === pinAtual) {
+      if (erroEl) {
+        erroEl.textContent = 'A nova senha deve ser diferente da senha atual.';
+        erroEl.style.display = 'block';
+      }
+      return;
+    }
+
+    if (!confirm(`Confirma a alteração da senha de acesso para "${pinNovo}"?`)) {
+      return;
+    }
+
+    try {
+      const resp = await fetch('/api/config/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ novoPin: pinNovo, desconectarOutros })
+      });
+      const data = await resp.json();
+      if (data.sucesso) {
+        if (sucessoEl) {
+          sucessoEl.textContent = 'Senha atualizada com sucesso!';
+          sucessoEl.style.display = 'block';
+        }
+        setTimeout(() => this.fecharModalPin(), 1200);
+      } else {
+        if (erroEl) {
+          erroEl.textContent = data.erro || 'Erro ao alterar a senha.';
+          erroEl.style.display = 'block';
+        }
+      }
+    } catch (e) {
+      if (erroEl) {
+        erroEl.textContent = 'Erro ao se comunicar com o servidor: ' + e.message;
+        erroEl.style.display = 'block';
+      }
+    }
   },
 
   /* ==========================================================================

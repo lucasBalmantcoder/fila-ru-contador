@@ -940,34 +940,55 @@ export class GerenciadorSessoes {
       return null;
     }
 
-    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-    const eventos = fs.readFileSync(eventosPath, 'utf-8')
-      .split('\n')
-      .filter(l => l.trim().length > 0)
-      .map(l => JSON.parse(l));
+    try {
+      const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+      meta.config = meta.config || {};
+      meta.filasAtivas = meta.filasAtivas || meta.config.filasAtivas || [1];
 
-    let rejeitados = [];
-    if (fs.existsSync(rejeitadosPath)) {
-      rejeitados = fs.readFileSync(rejeitadosPath, 'utf-8')
-        .split('\n')
-        .filter(l => l.trim().length > 0)
-        .map(l => JSON.parse(l));
+      const eventos = [];
+      const conteudoEv = fs.readFileSync(eventosPath, 'utf-8');
+      const linhasEv = conteudoEv.split('\n');
+      for (const l of linhasEv) {
+        if (!l.trim()) continue;
+        try {
+          eventos.push(JSON.parse(l));
+        } catch (e) {
+          console.warn(`[SESSAO] Linha de evento ignorada em ${id}:`, e.message);
+        }
+      }
+
+      let rejeitados = [];
+      if (fs.existsSync(rejeitadosPath)) {
+        const linhasRej = fs.readFileSync(rejeitadosPath, 'utf-8').split('\n');
+        for (const l of linhasRej) {
+          if (!l.trim()) continue;
+          try {
+            rejeitados.push(JSON.parse(l));
+          } catch (e) {}
+        }
+      }
+
+      let conexoes = [];
+      if (fs.existsSync(conexoesPath)) {
+        const linhasCon = fs.readFileSync(conexoesPath, 'utf-8').split('\n');
+        for (const l of linhasCon) {
+          if (!l.trim()) continue;
+          try {
+            conexoes.push(JSON.parse(l));
+          } catch (e) {}
+        }
+      }
+
+      return {
+        meta,
+        eventos,
+        rejeitados,
+        conexoes
+      };
+    } catch (err) {
+      console.error(`[SESSAO] Erro ao carregar dados da sessão ${id}:`, err);
+      return null;
     }
-
-    let conexoes = [];
-    if (fs.existsSync(conexoesPath)) {
-      conexoes = fs.readFileSync(conexoesPath, 'utf-8')
-        .split('\n')
-        .filter(l => l.trim().length > 0)
-        .map(l => JSON.parse(l));
-    }
-
-    return {
-      meta,
-      eventos,
-      rejeitados,
-      conexoes
-    };
   }
 
   excluirSessao(id) {

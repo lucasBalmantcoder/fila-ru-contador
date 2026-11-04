@@ -332,7 +332,18 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
 
     // GET /api/sessoes/:id (detalhes e métricas)
     if (!subAcao && req.method === 'GET') {
-      const metricas = calcularMetricas(dadosSessao.eventos, dadosSessao.meta.config, dadosSessao.meta.fimMs, conexoesSessao);
+      let metricas = null;
+      try {
+        metricas = calcularMetricas(
+          dadosSessao.eventos,
+          dadosSessao.meta.config || {},
+          dadosSessao.meta.fimMs,
+          conexoesSessao
+        );
+      } catch (err) {
+        console.error(`[SERVER] Erro ao calcular métricas da sessão ${sessaoId}:`, err);
+      }
+
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({
         meta: dadosSessao.meta,
@@ -445,28 +456,37 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
     req.on('end', () => {
       try {
         const dados = JSON.parse(body);
-        if (!dados.meta || !dados.eventos || !Array.isArray(dados.eventos)) {
-          throw new Error('Formato de arquivo JSON inválido.');
+        let meta = dados.meta || dados.config || {};
+        let eventos = dados.eventos || (Array.isArray(dados) ? dados : null);
+
+        if (!Array.isArray(eventos)) {
+          throw new Error('O arquivo JSON importado não contém uma lista válida de eventos.');
         }
 
-        const novoId = `sessao_importada_${Date.now()}`;
+        const agora = Date.now();
+        const novoId = `sessao_importada_${agora}`;
         const dirPath = path.join(DIR_DADOS, novoId);
         fs.mkdirSync(dirPath, { recursive: true });
 
-        dados.meta.id = novoId;
-        dados.meta.nome = `[Importado] ${dados.meta.nome}`;
-        dados.meta.status = 'encerrada';
+        meta.id = novoId;
+        meta.nome = meta.nome ? `[Importado] ${meta.nome}` : `[Importado] Sessão ${new Date().toLocaleDateString('pt-BR')}`;
+        meta.local = meta.local || 'Restaurante Universitário';
+        meta.status = 'encerrada';
+        meta.inicioMs = meta.inicioMs || (eventos[0]?.t || agora);
+        meta.fimMs = meta.fimMs || (eventos[eventos.length - 1]?.t || agora);
+        meta.config = meta.config || {};
+        meta.filasAtivas = meta.filasAtivas || meta.config.filasAtivas || [1];
 
-        fs.writeFileSync(path.join(dirPath, 'metadados.json'), JSON.stringify(dados.meta, null, 2), 'utf-8');
-        const linhasEventos = dados.eventos.map(e => JSON.stringify(e)).join('\n') + '\n';
+        fs.writeFileSync(path.join(dirPath, 'metadados.json'), JSON.stringify(meta, null, 2), 'utf-8');
+        const linhasEventos = eventos.map(e => JSON.stringify(e)).join('\n') + '\n';
         fs.writeFileSync(path.join(dirPath, 'eventos.jsonl'), linhasEventos, 'utf-8');
 
-        if (dados.rejeitados && dados.rejeitados.length > 0) {
+        if (dados.rejeitados && Array.isArray(dados.rejeitados) && dados.rejeitados.length > 0) {
           const linhasRejeitados = dados.rejeitados.map(r => JSON.stringify(r)).join('\n') + '\n';
           fs.writeFileSync(path.join(dirPath, 'rejeitados.jsonl'), linhasRejeitados, 'utf-8');
         }
 
-        if (dados.conexoes && dados.conexoes.length > 0) {
+        if (dados.conexoes && Array.isArray(dados.conexoes) && dados.conexoes.length > 0) {
           const linhasConexoes = dados.conexoes.map(c => JSON.stringify(c)).join('\n') + '\n';
           fs.writeFileSync(path.join(dirPath, 'conexoes.jsonl'), linhasConexoes, 'utf-8');
         }

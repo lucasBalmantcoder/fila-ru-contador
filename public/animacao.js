@@ -357,6 +357,20 @@ export class AnimadorFila {
     return { x: 0, y: 0, w: 10, h: 10, orientacao: 'horizontal' };
   }
 
+  obterPosicaoOrigem(filaNum) {
+    if (filaNum === 1) return { x: 766, y: 20 };
+    if (filaNum === 2) return { x: 505, y: 210 };
+    if (filaNum === 3) return { x: 176, y: 265 };
+    return { x: 0, y: 0 };
+  }
+
+  obterPosicaoDestino(filaNum) {
+    if (filaNum === 1) return { x: 574, y: 215 }; // Centro da caixa Catraca
+    if (filaNum === 2) return { x: 172, y: 215 }; // Centro da caixa Mesas
+    if (filaNum === 3) return { x: 172, y: 505 }; // Centro da caixa Saída
+    return { x: 0, y: 0 };
+  }
+
   obterComprimentoMaximoCaminho(filaNum) {
     if (filaNum === 1) return 296;
     if (filaNum === 2) return 593;
@@ -365,25 +379,65 @@ export class AnimadorFila {
   }
 
   /**
-   * Atualiza a animação a partir de operações diff ou redesenho completo.
-   * Método de compatibilidade para garantir que chamadas a aplicarOperacoes nunca falhem.
+   * Aplica operações atômicas recebidas pelo diff de estados.
+   * Executa a animação de movimento dos blocos que avançam, são atendidos ou saem.
    */
-  aplicarOperacoes(diff, estado) {
-    this.renderizarEstado(estado);
+  aplicarOperacoes(diff = [], estadoNovo) {
+    if (!this.habilitada) return;
+
+    if (!diff || !Array.isArray(diff) || diff.length === 0 || diff.length > 8 || this.abaEmSegundoPlano) {
+      this.renderizarEstado(estadoNovo, false);
+      return;
+    }
+
+    for (const op of diff) {
+      if (op.op === 'confirmar') {
+        const fNum = op.fila || 1;
+        const no = this.camadaPessoas.querySelector(`[data-chave="f${fNum}_p${op.pessoa}"]`);
+        if (no) {
+          const posDest = this.obterPosicaoDestino(fNum);
+          no.style.transition = 'transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.5s ease';
+          no.setAttribute('transform', `translate(${posDest.x}, ${posDest.y})`);
+          no.style.opacity = '0';
+          setTimeout(() => no.remove(), 600);
+        }
+      } else if (op.op === 'transferir') {
+        const noF1 = this.camadaPessoas.querySelector(`[data-chave="f1_p${op.pessoa}"]`);
+        if (noF1) {
+          const posCatraca = this.obterPosicaoDestino(1);
+          noF1.style.transition = 'transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease';
+          noF1.setAttribute('transform', `translate(${posCatraca.x}, ${posCatraca.y})`);
+          noF1.style.opacity = '0';
+          setTimeout(() => noF1.remove(), 500);
+        }
+      } else if (op.op === 'anular') {
+        const fNum = op.fila || 1;
+        const no = this.camadaPessoas.querySelector(`[data-chave="f${fNum}_p${op.pessoa}"]`);
+        if (no) {
+          no.style.transition = 'transform 0.4s ease, opacity 0.4s ease';
+          no.style.transform += ' scale(0.2)';
+          no.style.opacity = '0';
+          setTimeout(() => no.remove(), 400);
+        }
+      }
+    }
+
+    // Sincroniza posições da fila restante com avanço suave (150ms)
+    setTimeout(() => {
+      this.renderizarEstado(estadoNovo, true);
+    }, 150);
   }
 
   /**
-   * Renderiza o estado completo das filas.
+   * Renderiza o estado completo das filas com animação de deslizamento suave.
    * @param {Object} estado - Estado derivado de derivarEstado.
+   * @param {boolean} [animar=true] - Se deve aplicar transição suave ou atualizar direto.
    */
-  renderizarEstado(estado) {
+  renderizarEstado(estado, animar = true) {
     if (!this.habilitada || !this.svg || !estado) return;
     this.estadoAtual = estado;
 
-    this.camadaPessoas.innerHTML = '';
-    this.camadaBadges.innerHTML = '';
-
-    const filasAtivas = estado.filasAtivas || [1];
+    if (this.abaEmSegundoPlano) animar = false;
 
     // Atualiza contadores nas caixas
     const contCatraca = document.getElementById('contador_caixa_catraca');
@@ -403,6 +457,18 @@ export class AnimadorFila {
       const totalSaida = estado.filas?.[3]?.contadores?.atendidas ?? 0;
       contSaida.textContent = `${totalSaida} saíram`;
     }
+
+    const filasAtivas = estado.filasAtivas || [1];
+
+    // Mapeamento dos nós já existentes no DOM
+    const nosExistentes = new Map();
+    for (const no of Array.from(this.camadaPessoas.children)) {
+      const chave = no.dataset.chave;
+      if (chave) nosExistentes.set(chave, no);
+    }
+
+    const chavesVisiveisAtuais = new Set();
+    this.camadaBadges.innerHTML = '';
 
     // Renderiza cada fila (1, 2, 3)
     for (const fNum of [1, 2, 3]) {
@@ -446,13 +512,121 @@ export class AnimadorFila {
 
       for (let i = 0; i < qtdRenderizar; i++) {
         const pNum = filaArray[i];
+        const chave = `f${fNum}_p${pNum}`;
+        chavesVisiveisAtuais.add(chave);
+
         const dist = i * espacamento;
         const pt = this.obterPontoNoCaminho(fNum, dist);
         const ehCabeca = (i === 0);
 
-        this.desenharItemPessoa(fNum, pNum, pt, ehCabeca, fObj);
+        let g = nosExistentes.get(chave);
+        if (!g) {
+          // Criação do novo bloco na posição de entrada da fila
+          g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+          g.setAttribute('class', 'item-pessoa');
+          g.dataset.chave = chave;
+          g.dataset.pessoa = String(pNum);
+          g.dataset.fila = String(fNum);
+
+          const ptOrigem = this.obterPosicaoOrigem(fNum);
+          g.setAttribute('transform', `translate(${ptOrigem.x}, ${ptOrigem.y})`);
+
+          const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+          rect.setAttribute('x', -pt.w / 2);
+          rect.setAttribute('y', -pt.h / 2);
+          rect.setAttribute('width', pt.w);
+          rect.setAttribute('height', pt.h);
+          rect.setAttribute('rx', '1.5');
+          g.appendChild(rect);
+
+          const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', '0');
+          text.setAttribute('y', '3');
+          text.setAttribute('text-anchor', 'middle');
+          text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
+          text.setAttribute('font-size', '8');
+          text.setAttribute('font-weight', 'bold');
+          text.setAttribute('fill', '#ffffff');
+          text.textContent = String(pNum);
+          g.appendChild(text);
+
+          this.camadaPessoas.appendChild(g);
+
+          // Força reflow antes de animar o deslocamento
+          void g.getBoundingClientRect();
+        }
+
+        // Cabeça e pulso
+        if (ehCabeca) {
+          g.setAttribute('id', `cabeca_f${fNum}`);
+          g.dataset.esperaMs = fObj?.esperaNaCabecaMs || 0;
+        } else if (g.id === `cabeca_f${fNum}`) {
+          g.removeAttribute('id');
+        }
+
+        // Cores conforme o esboço de referência
+        let fillCor = '#ef4444';
+        let strokeCor = 'none';
+        let strokeW = '0';
+
+        if (fNum === 1) {
+          if (ehCabeca) {
+            fillCor = '#22c55e'; // Cabeça na catraca: verde
+            strokeCor = '#15803d';
+            strokeW = '2';
+          } else {
+            fillCor = '#ef4444';
+          }
+        } else if (fNum === 2) {
+          if (ehCabeca) {
+            fillCor = '#ec4899'; // Cabeça junto às mesas: rosa
+            strokeCor = '#be185d';
+            strokeW = '2';
+          } else {
+            fillCor = '#22c55e';
+          }
+        } else if (fNum === 3) {
+          if (ehCabeca) {
+            fillCor = '#f97316'; // Cabeça junto à saída: laranja
+            strokeCor = '#c2410c';
+            strokeW = '2';
+          } else {
+            fillCor = '#ec4899';
+          }
+        }
+
+        if (this.destaqueFila && this.destaqueFila !== fNum) {
+          g.style.opacity = '0.35';
+        } else {
+          g.style.opacity = '1';
+        }
+
+        const rect = g.querySelector('rect');
+        if (rect) {
+          rect.setAttribute('x', -pt.w / 2);
+          rect.setAttribute('y', -pt.h / 2);
+          rect.setAttribute('width', pt.w);
+          rect.setAttribute('height', pt.h);
+          rect.setAttribute('fill', fillCor);
+          if (strokeCor !== 'none') {
+            rect.setAttribute('stroke', strokeCor);
+            rect.setAttribute('stroke-width', strokeW);
+          } else {
+            rect.removeAttribute('stroke');
+            rect.removeAttribute('stroke-width');
+          }
+        }
+
+        // Aplica transição de movimento suave até a posição de destino no trajeto
+        if (animar) {
+          g.style.transition = 'transform 0.6s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease';
+        } else {
+          g.style.transition = 'none';
+        }
+        g.setAttribute('transform', `translate(${pt.x}, ${pt.y})`);
       }
 
+      // Selo +N para filas que excedem a capacidade visual
       if (precisaAgrupar) {
         const excedente = totalPessoas - qtdRenderizar;
         const distBadge = qtdRenderizar * espacamento;
@@ -460,75 +634,18 @@ export class AnimadorFila {
         this.desenharBadgeMaisN(fNum, excedente, ptBadge);
       }
     }
-  }
 
-  desenharItemPessoa(filaNum, pessoaNum, pt, ehCabeca, fObj) {
-    const g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-    g.setAttribute('class', 'item-pessoa');
-    if (ehCabeca) {
-      g.setAttribute('id', `cabeca_f${filaNum}`);
-      g.dataset.esperaMs = fObj?.esperaNaCabecaMs || 0;
-    }
-
-    let fillCor = '#ef4444';
-    let strokeCor = 'none';
-    let strokeW = '0';
-
-    if (filaNum === 1) {
-      if (ehCabeca) {
-        fillCor = '#22c55e'; // Cabeça na catraca: verde
-        strokeCor = '#15803d';
-        strokeW = '2';
-      } else {
-        fillCor = '#ef4444'; // Demais: vermelho
-      }
-    } else if (filaNum === 2) {
-      if (ehCabeca) {
-        fillCor = '#ec4899'; // Cabeça junto às mesas: rosa
-        strokeCor = '#be185d';
-        strokeW = '2';
-      } else {
-        fillCor = '#22c55e'; // Demais: verde
-      }
-    } else if (filaNum === 3) {
-      if (ehCabeca) {
-        fillCor = '#f97316'; // Cabeça junto à saída: laranja
-        strokeCor = '#c2410c';
-        strokeW = '2';
-      } else {
-        fillCor = '#ec4899'; // Demais: rosa
+    // Remove nós de blocos que não estão mais na fila
+    for (const [chave, no] of nosExistentes.entries()) {
+      if (!chavesVisiveisAtuais.has(chave)) {
+        if (animar) {
+          no.style.opacity = '0';
+          setTimeout(() => no.remove(), 400);
+        } else {
+          no.remove();
+        }
       }
     }
-
-    if (this.destaqueFila && this.destaqueFila !== filaNum) {
-      g.style.opacity = '0.35';
-    }
-
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', pt.x - pt.w / 2);
-    rect.setAttribute('y', pt.y - pt.h / 2);
-    rect.setAttribute('width', pt.w);
-    rect.setAttribute('height', pt.h);
-    rect.setAttribute('rx', '1.5');
-    rect.setAttribute('fill', fillCor);
-    if (strokeCor !== 'none') {
-      rect.setAttribute('stroke', strokeCor);
-      rect.setAttribute('stroke-width', strokeW);
-    }
-    g.appendChild(rect);
-
-    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    text.setAttribute('x', pt.x);
-    text.setAttribute('y', pt.y + 3);
-    text.setAttribute('text-anchor', 'middle');
-    text.setAttribute('font-family', 'system-ui, -apple-system, sans-serif');
-    text.setAttribute('font-size', '8');
-    text.setAttribute('font-weight', 'bold');
-    text.setAttribute('fill', '#ffffff');
-    text.textContent = String(pessoaNum);
-    g.appendChild(text);
-
-    this.camadaPessoas.appendChild(g);
   }
 
   desenharBadgeMaisN(filaNum, excedente, pt) {

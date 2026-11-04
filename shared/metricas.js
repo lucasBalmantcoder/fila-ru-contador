@@ -535,6 +535,18 @@ export function verificarLeiDeLittle(L_medio, lambdaPorMin, W_espera_seg) {
  * @param {Object} [opcoes={}] - { excluirPeriodosSemCobertura: boolean }.
  */
 export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, conexoes = [], opcoes = {}) {
+  // Tratamento de compatibilidade caso a assinatura antiga (eventos, duracaoTotalMs, config, conexoes, opcoes) seja usada
+  if (typeof config === 'number') {
+    const configReal = (fimMsParam && typeof fimMsParam === 'object') ? fimMsParam : {};
+    fimMsParam = null;
+    config = configReal;
+  }
+
+  eventos = Array.isArray(eventos) ? eventos : [];
+  config = (config && typeof config === 'object') ? config : {};
+  conexoes = Array.isArray(conexoes) ? conexoes : [];
+  opcoes = (opcoes && typeof opcoes === 'object') ? opcoes : {};
+
   const inicioEv = eventos.find(e => e.tipo === 'sessao_iniciada');
   const encerramentoEv = eventos.find(e => e.tipo === 'sessao_encerrada');
 
@@ -545,13 +557,13 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
 
   const estadoFinal = derivarEstado(eventos, fimMs, config);
   const filasAtivas = estadoFinal.filasAtivas || [1];
-  const todasPessoas = estadoFinal.pessoas;
+  const todasPessoas = estadoFinal.pessoas || [];
 
   const metricasPorFila = {};
 
   for (const fNum of [1, 2, 3]) {
-    const fo = estadoFinal.filas[fNum];
-    if (!filasAtivas.includes(fNum)) {
+    const fo = estadoFinal.filas ? estadoFinal.filas[fNum] : null;
+    if (!fo || !filasAtivas.includes(fNum)) {
       continue;
     }
 

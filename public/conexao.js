@@ -243,6 +243,32 @@ export class GerenciadorConexao {
     }
   }
 
+  desconectar() {
+    this.pararPing();
+    this.pararFallbackPolling();
+    if (this.timerReconexao) {
+      clearTimeout(this.timerReconexao);
+      this.timerReconexao = null;
+    }
+    if (this.timerChecagemQueda) {
+      clearInterval(this.timerChecagemQueda);
+      this.timerChecagemQueda = null;
+    }
+    if (this.ws) {
+      try {
+        this.ws.onclose = null;
+        this.ws.onerror = null;
+        this.ws.close();
+      } catch (e) {}
+      this.ws = null;
+    }
+    this.atualizarStatus('offline');
+  }
+
+  fechar() {
+    this.desconectar();
+  }
+
   reconectarImediatamente() {
     if (this.timerReconexao) {
       clearTimeout(this.timerReconexao);
