@@ -12,18 +12,25 @@ import { derivarEstado, diffEstado } from '../shared/estado.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const DIR_DADOS = path.resolve(__dirname, '..', 'dados');
+function criarSetFilasDesativadas(iniciais = []) {
+  const s = new Set(iniciais);
+  s.includes = function(v) { return this.has(Number(v)); };
+  return s;
+}
+
+const DIR_DADOS_PADRAO = path.resolve(__dirname, '..', 'dados');
 
 export class GerenciadorSessoes {
-  constructor() {
+  constructor(dirDados = null) {
+    this.dirDados = dirDados || process.env.DIR_DADOS || DIR_DADOS_PADRAO;
     this.sessaoAtiva = null;
     this.garantirDiretorioDados();
     this.retomarSessaoAtivaSeExistir();
   }
 
   garantirDiretorioDados() {
-    if (!fs.existsSync(DIR_DADOS)) {
-      fs.mkdirSync(DIR_DADOS, { recursive: true });
+    if (!fs.existsSync(this.dirDados)) {
+      fs.mkdirSync(this.dirDados, { recursive: true });
     }
   }
 
@@ -33,11 +40,11 @@ export class GerenciadorSessoes {
    */
   retomarSessaoAtivaSeExistir() {
     try {
-      const entradas = fs.readdirSync(DIR_DADOS, { withFileTypes: true });
+      const entradas = fs.readdirSync(this.dirDados, { withFileTypes: true });
       const dirs = entradas.filter(e => e.isDirectory()).map(e => e.name);
 
       for (const dirNome of dirs) {
-        const dirPath = path.join(DIR_DADOS, dirNome);
+        const dirPath = path.join(this.dirDados, dirNome);
         const metaPath = path.join(dirPath, 'metadados.json');
         const eventosPath = path.join(dirPath, 'eventos.jsonl');
 
@@ -66,7 +73,7 @@ export class GerenciadorSessoes {
     const clientEventIds = new Map(); // clientEventId -> evento
     let maxSeq = 0;
     const maxPessoaPorFila = { 1: 0, 2: 0, 3: 0 };
-    const filasDesativadas = new Set();
+    const filasDesativadas = criarSetFilasDesativadas();
 
     for (const linha of linhas) {
       try {
@@ -125,7 +132,7 @@ export class GerenciadorSessoes {
     const agora = Date.now();
     const dataIso = new Date(agora).toISOString().replace(/[:.]/g, '-');
     const dirNome = `sessao_${dataIso}_${Math.random().toString(36).substring(2, 7)}`;
-    const dirPath = path.join(DIR_DADOS, dirNome);
+    const dirPath = path.join(this.dirDados, dirNome);
     fs.mkdirSync(dirPath, { recursive: true });
 
     const eventosPath = path.join(dirPath, 'eventos.jsonl');
@@ -207,7 +214,7 @@ export class GerenciadorSessoes {
       filasAtivas,
       seq: 1,
       proximaPessoaPorFila: { 1: 1, 2: 1, 3: 1 },
-      filasDesativadas: new Set(),
+      filasDesativadas: criarSetFilasDesativadas(),
       eventos: [eventoInicio],
       clientEventIds: new Map([[eventoInicio.clientEventId, eventoInicio]]),
       estadoAtual: derivarEstado([eventoInicio], agora, config)
@@ -326,7 +333,7 @@ export class GerenciadorSessoes {
 
   obterConexoes(id = null) {
     const caminho = id
-      ? path.join(DIR_DADOS, id, 'conexoes.jsonl')
+      ? path.join(this.dirDados, id, 'conexoes.jsonl')
       : (this.sessaoAtiva?.conexoesPath);
 
     if (!caminho || !fs.existsSync(caminho)) return [];
@@ -453,25 +460,37 @@ export class GerenciadorSessoes {
 
     // Validação de Fila Ativa para comandos operacionais (chegada, atendido, anulacao, reversao, ajuste_fila)
     if (cmd.acao !== 'anotacao') {
-      if (!filasAtivas.includes(filaNum) || this.sessaoAtiva.filasDesativadas.has(filaNum)) {
-        this.registrarRejeicao(cmd, autor, 'FILA_INATIVA', `A Fila ${filaNum} não está ativa nesta sessão.`);
+      if (this.sessaoAtiva.filasDesativadas.has(filaNum)) {
+        this.registrarRejeicao(cmd, autor, 'FILA_DESATIVADA', `A Fila ${filaNum} foi desativada durante a sessão.`);
         return {
           sucesso: false,
-          codigo: 'FILA_INATIVA',
-          mensagem: `A Fila ${filaNum} não foi selecionada nesta sessão ou já foi desativada.`,
+          codigo: 'FILA_DESATIVADA',
+          mensagem: `A Fila ${filaNum} já foi desativada.`,
           clientEventId: cmd.clientEventId
         };
       }
 
-      // Validação de Modo Apoio: aparelhos em apoio não podem registrar eventos
-      if (autor.area === 'apoio' || autor.area === 'sem_area') {
-        this.registrarRejeicao(cmd, autor, 'APARELHO_EM_APOIO', 'Aparelho configurado em modo apoio (somente visualização).');
+      if (!filasAtivas.includes(filaNum)) {
+        this.registrarRejeicao(cmd, autor, 'FILA_INATIVA', `A Fila ${filaNum} não está ativa nesta sessão.`);
         return {
           sucesso: false,
-          codigo: 'APARELHO_EM_APOIO',
-          mensagem: 'Aparelho em modo apoio não possui permissão para registrar eventos na fila.',
+          codigo: 'FILA_INATIVA',
+          mensagem: `A Fila ${filaNum} não foi selecionada nesta sessão.`,
           clientEventId: cmd.clientEventId
         };
+      }
+
+      // Validação de Modo Apoio: aparelhos em apoio não podem registrar eventos de coleta (chegada, atendido, etc)
+      if (['chegada', 'atendido', 'anulacao', 'reversao'].includes(cmd.acao)) {
+        if (autor.area === 'apoio' || autor.area === 'sem_area' || autor.papel === 'apoio') {
+          this.registrarRejeicao(cmd, autor, 'APARELHO_EM_APOIO', 'Aparelho configurado em modo apoio (somente visualização).');
+          return {
+            sucesso: false,
+            codigo: 'APARELHO_EM_APOIO',
+            mensagem: 'Aparelho em modo apoio não possui permissão para registrar eventos na fila.',
+            clientEventId: cmd.clientEventId
+          };
+        }
       }
     }
 
@@ -787,12 +806,22 @@ export class GerenciadorSessoes {
         const diff = diffEstado(estadoAnterior, estadoNovo);
         this.sessaoAtiva.estadoAtual = estadoNovo;
 
+        const evAjusteResumo = {
+          seq: this.sessaoAtiva.seq,
+          t: tEvento,
+          tipo: 'ajuste_fila',
+          fila: filaNum,
+          delta: deltaCalculado,
+          tamanhoApos: qtdReal,
+          clientEventId: cmd.clientEventId
+        };
+
         return {
           sucesso: true,
           ajuste: true,
           delta: deltaCalculado,
           tamanhoApos: qtdReal,
-          evento: eventosAjuste[0] || null,
+          evento: evAjusteResumo,
           eventos: eventosAjuste,
           estado: estadoNovo,
           diff,
@@ -909,14 +938,23 @@ export class GerenciadorSessoes {
     }
   }
 
+  desativarFila(fila, autor = 'Servidor') {
+    const autorObj = typeof autor === 'string' ? { id: 'servidor', nome: autor } : autor;
+    return this.processarComando({ acao: 'desativar_fila', fila: Number(fila) }, autorObj);
+  }
+
+  definirAreaAparelho(dispId, area, autor = { id: 'servidor', nome: 'Servidor' }) {
+    return this.processarComando({ acao: 'atribuicao', dispositivoId: dispId, area }, autor);
+  }
+
   listarTodasSessoes() {
     this.garantirDiretorioDados();
-    const entradas = fs.readdirSync(DIR_DADOS, { withFileTypes: true });
+    const entradas = fs.readdirSync(this.dirDados, { withFileTypes: true });
     const sessoes = [];
 
     for (const ent of entradas) {
       if (ent.isDirectory()) {
-        const metaPath = path.join(DIR_DADOS, ent.name, 'metadados.json');
+        const metaPath = path.join(this.dirDados, ent.name, 'metadados.json');
         if (fs.existsSync(metaPath)) {
           try {
             const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
@@ -930,7 +968,7 @@ export class GerenciadorSessoes {
   }
 
   obterSessaoCompleta(id) {
-    const dirPath = path.join(DIR_DADOS, id);
+    const dirPath = path.join(this.dirDados, id);
     const metaPath = path.join(dirPath, 'metadados.json');
     const eventosPath = path.join(dirPath, 'eventos.jsonl');
     const rejeitadosPath = path.join(dirPath, 'rejeitados.jsonl');
@@ -995,7 +1033,7 @@ export class GerenciadorSessoes {
     if (this.sessaoAtiva && this.sessaoAtiva.meta.id === id) {
       throw new Error('Não é possível excluir uma sessão que está atualmente em andamento.');
     }
-    const dirPath = path.join(DIR_DADOS, id);
+    const dirPath = path.join(this.dirDados, id);
     if (fs.existsSync(dirPath)) {
       fs.rmSync(dirPath, { recursive: true, force: true });
       return true;
@@ -1004,7 +1042,7 @@ export class GerenciadorSessoes {
   }
 
   renomearSessao(id, novoNome) {
-    const dirPath = path.join(DIR_DADOS, id);
+    const dirPath = path.join(this.dirDados, id);
     const metaPath = path.join(dirPath, 'metadados.json');
     if (fs.existsSync(metaPath)) {
       const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));

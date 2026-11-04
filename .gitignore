@@ -19,6 +19,7 @@ sessoes/
 # Backups e exportações
 *.csv
 backup*.json
+dados_backup/
 
 # Arquivos do sistema operacional
 .DS_Store

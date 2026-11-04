@@ -68,7 +68,9 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
 
     if (ev.tipo === 'chegada') {
       filaObj.contadores.chegadas++;
-      filaObj.totalEventos++;
+      if (!ev.encadeado) {
+        filaObj.totalEventos++;
+      }
 
       pessoas.set(chavePessoa, {
         pessoa: pId,

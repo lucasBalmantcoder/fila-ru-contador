@@ -205,7 +205,8 @@ export function calcularVazaoBlocos(eventos, inicioMs, fimMs, blocoMin = 5, fila
 
   for (const b of blocos) {
     b.vazaoPorMin = b.atendimentos / blocoMin;
-    b.semPassagem = (b.chegadas === 0 && b.atendimentos === 0);
+    b.zeroPassagens = (b.atendimentos === 0);
+    b.semPassagem = (b.atendimentos === 0);
   }
 
   const vazoes = blocos.map(b => b.vazaoPorMin);
@@ -332,7 +333,15 @@ export function calcularOciosidade(eventos, inicioMs, fimMs, limiarSeg = 60, fil
     tempoSemDemandaMs,
     percSemDemanda: (tempoSemDemandaMs / duracaoTotal) * 100,
     tempoServicoParadoMs,
-    percServicoParado: (tempoServicoParadoMs / duracaoTotal) * 100
+    percServicoParado: (tempoServicoParadoMs / duracaoTotal) * 100,
+    detalhe: {
+      servicoParadoSeg: Math.round(tempoServicoParadoMs / 1000),
+      semDemandaSeg: Math.round(tempoSemDemandaMs / 1000),
+      semCoberturaSeg: Math.round(tempoSemCoberturaMs / 1000),
+      percServicoParado: (tempoServicoParadoMs / duracaoTotal) * 100,
+      percSemDemanda: (tempoSemDemandaMs / duracaoTotal) * 100,
+      percSemCobertura: (tempoSemCoberturaMs / duracaoTotal) * 100
+    }
   };
 }
 
@@ -350,8 +359,13 @@ export function calcularCoberturaPorFila(conexoes = [], filaNum = 1, inicioMs = 
     return {
       disponivel: false,
       coberturaPerc: 100,
+      percentual: 100,
       cobertoMs: duracaoTotal,
+      tempoComCoberturaSeg: Math.round(duracaoTotal / 1000),
+      tempoSemCoberturaSeg: 0,
       lacunas: [],
+      intervalosSemCobertura: [],
+      aparelhosDistintos: [],
       cobertoAgora: false
     };
   }
@@ -391,13 +405,13 @@ export function calcularCoberturaPorFila(conexoes = [], filaNum = 1, inicioMs = 
 
     while (evIdx < evs.length && evs[evIdx].t <= tIni) {
       const ev = evs[evIdx];
-      const dId = ev.dispositivoId;
-      if (ev.tipo === 'conexao') {
+      const dId = ev.dispositivoId || ev.id;
+      if (ev.tipo === 'conexao' || ev.acao === 'conectou') {
         aparelhos.set(dId, { conectado: true, area: ev.area });
-      } else if (ev.tipo === 'desconexao') {
+      } else if (ev.tipo === 'desconexao' || ev.acao === 'desconectou') {
         const ap = aparelhos.get(dId);
         if (ap) ap.conectado = false;
-      } else if (ev.tipo === 'mudanca_area' || ev.tipo === 'atribuicao') {
+      } else if (ev.tipo === 'mudanca_area' || ev.tipo === 'atribuicao' || ev.acao === 'mudanca_area') {
         const ap = aparelhos.get(dId) || { conectado: true };
         ap.area = ev.paraArea || ev.area;
         aparelhos.set(dId, ap);
@@ -419,20 +433,35 @@ export function calcularCoberturaPorFila(conexoes = [], filaNum = 1, inicioMs = 
       if (lacunaAtual) {
         lacunaAtual.fim = tIni;
         lacunaAtual.duracaoMs = lacunaAtual.fim - lacunaAtual.inicio;
+        lacunaAtual.inicioMs = lacunaAtual.inicio;
+        lacunaAtual.fimMs = lacunaAtual.fim;
+        lacunaAtual.duracaoSeg = Math.round(lacunaAtual.duracaoMs / 1000);
         if (lacunaAtual.duracaoMs > 0) lacunas.push(lacunaAtual);
         lacunaAtual = null;
       }
     } else {
       if (!lacunaAtual) {
-        lacunaAtual = { inicio: tIni, fim: tFim, duracaoMs: delta };
+        lacunaAtual = {
+          inicio: tIni,
+          fim: tFim,
+          duracaoMs: delta,
+          inicioMs: tIni,
+          fimMs: tFim,
+          duracaoSeg: Math.round(delta / 1000)
+        };
       } else {
         lacunaAtual.fim = tFim;
         lacunaAtual.duracaoMs = lacunaAtual.fim - lacunaAtual.inicio;
+        lacunaAtual.fimMs = tFim;
+        lacunaAtual.duracaoSeg = Math.round(lacunaAtual.duracaoMs / 1000);
       }
     }
   }
 
   if (lacunaAtual && lacunaAtual.duracaoMs > 0) {
+    lacunaAtual.inicioMs = lacunaAtual.inicio;
+    lacunaAtual.fimMs = lacunaAtual.fim;
+    lacunaAtual.duracaoSeg = Math.round(lacunaAtual.duracaoMs / 1000);
     lacunas.push(lacunaAtual);
   }
 
@@ -450,8 +479,13 @@ export function calcularCoberturaPorFila(conexoes = [], filaNum = 1, inicioMs = 
   return {
     disponivel: true,
     coberturaPerc,
+    percentual: coberturaPerc,
     cobertoMs,
+    tempoComCoberturaSeg: Math.round(cobertoMs / 1000),
+    tempoSemCoberturaSeg: Math.round((duracaoTotal - cobertoMs) / 1000),
     lacunas,
+    intervalosSemCobertura: lacunas,
+    aparelhosDistintos: Array.from(aparelhos.keys()),
     cobertoAgora
   };
 }
@@ -536,7 +570,9 @@ export function verificarLeiDeLittle(L_medio, lambdaPorMin, W_espera_seg) {
  */
 export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, conexoes = [], opcoes = {}) {
   // Tratamento de compatibilidade caso a assinatura antiga (eventos, duracaoTotalMs, config, conexoes, opcoes) seja usada
+  let duracaoForcadaMs = null;
   if (typeof config === 'number') {
+    duracaoForcadaMs = config;
     const configReal = (fimMsParam && typeof fimMsParam === 'object') ? fimMsParam : {};
     fimMsParam = null;
     config = configReal;
@@ -550,8 +586,13 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
   const inicioEv = eventos.find(e => e.tipo === 'sessao_iniciada');
   const encerramentoEv = eventos.find(e => e.tipo === 'sessao_encerrada');
 
-  const inicioMs = inicioEv ? inicioEv.t : (eventos[0]?.t || Date.now());
-  const fimMs = fimMsParam || (encerramentoEv ? encerramentoEv.t : (eventos[eventos.length - 1]?.t || Date.now()));
+  let inicioMs = inicioEv ? inicioEv.t : (eventos[0]?.t || Date.now());
+  if (conexoes && conexoes.length > 0 && conexoes[0].t < inicioMs) {
+    inicioMs = conexoes[0].t;
+  }
+  const fimMs = duracaoForcadaMs
+    ? (inicioMs + duracaoForcadaMs)
+    : (fimMsParam || (encerramentoEv ? encerramentoEv.t : (eventos[eventos.length - 1]?.t || Date.now())));
   const duracaoTotalMs = Math.max(1000, fimMs - inicioMs);
   const duracaoMin = duracaoTotalMs / (60 * 1000);
 

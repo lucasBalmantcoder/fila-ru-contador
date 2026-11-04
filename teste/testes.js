@@ -18,10 +18,12 @@ import {
 import { GerenciadorSessoes } from '../server/sessao.js';
 import fs from 'fs';
 import path from 'path';
+import os from 'os';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const dirTempTeste = fs.mkdtempSync(path.join(os.tmpdir(), 'fila-ru-teste-'));
 
 console.log('\n================================================================');
 console.log('   SUÍTE DE TESTES AUTOMATIZADOS - FILA RU');
@@ -91,7 +93,7 @@ assert(estFifo.pessoas.find(p => p.pessoa === 2).esperaMs === 13000, 'Pessoa 2 e
    4. Teste: Validação do Servidor e Confirmação Simultânea
    -------------------------------------------------------------------------- */
 console.log('\n--- 4. Validação e Concorrência de Comandos no Servidor ---');
-const gs = new GerenciadorSessoes();
+const gs = new GerenciadorSessoes(dirTempTeste);
 if (gs.sessaoAtiva) gs.encerrarSessao();
 
 gs.iniciarSessao({ nome: 'Teste Unitário', duracaoPrevistaMin: 60, servidores: 1, teste: true });
@@ -224,7 +226,7 @@ assert(oci.tempoOciosoTotalMs === 70000, 'Tempo ocioso contabilizado = 70.000 ms
    12. Teste: Combinações de Seleção de Filas e Rejeição FILA_INATIVA
    -------------------------------------------------------------------------- */
 console.log('\n--- 12. Combinações de Filas e Rejeição FILA_INATIVA ---');
-const gsMulti = new GerenciadorSessoes();
+const gsMulti = new GerenciadorSessoes(dirTempTeste);
 const combinacoes = [
   [1],
   [2],
@@ -473,6 +475,10 @@ assert(metLegadas.n_atendimentos === 1, 'Métricas legadas mantêm n_atendimento
 assert(metLegadas.filas && metLegadas.filas['1'].n_atendimentos === 1, 'Métricas legadas populam Fila 1');
 
 if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
+
+try {
+  fs.rmSync(dirTempTeste, { recursive: true, force: true });
+} catch (_) {}
 
 console.log('\n================================================================');
 console.log(`   RESULTADO DOS TESTES: ${passou} aprovados, ${falhou} falhas.`);
