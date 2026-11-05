@@ -6,6 +6,43 @@
  */
 
 /**
+ * Verifica se uma fila possui entrada encadeada da fila anterior.
+ * Depende estritamente de: fila anterior ativa E fila atual ativa.
+ * @param {number} filaNum - Fila a verificar (2 ou 3).
+ * @param {Array<number>} filasAtivas - Lista de filas ativas da sessão.
+ * @param {Set<number>|Array<number>|null} [filasDesativadas=[]] - Filas desativadas.
+ * @returns {boolean}
+ */
+export function filaTemEntradaEncadeada(filaNum, filasAtivas = [1], filasDesativadas = []) {
+  const fNum = Number(filaNum);
+  if (fNum <= 1 || fNum > 3) return false;
+  const fAnt = fNum - 1;
+
+  const ativasList = Array.isArray(filasAtivas) ? filasAtivas.map(Number) : [1];
+  const desativadasSet = filasDesativadas instanceof Set
+    ? filasDesativadas
+    : new Set(Array.isArray(filasDesativadas) ? filasDesativadas.map(Number) : []);
+
+  const antAtiva = ativasList.includes(fAnt) && !desativadasSet.has(fAnt);
+  const atualAtiva = ativasList.includes(fNum) && !desativadasSet.has(fNum);
+  return antAtiva && atualAtiva;
+}
+
+/**
+ * Verifica se a saída de uma fila gera automaticamente entrada na fila seguinte.
+ * Depende estritamente de: fila atual ativa E fila seguinte ativa.
+ * @param {number} filaNum - Fila de saída (1 ou 2).
+ * @param {Array<number>} filasAtivas - Lista de filas ativas da sessão.
+ * @param {Set<number>|Array<number>|null} [filasDesativadas=[]] - Filas desativadas.
+ * @returns {boolean}
+ */
+export function filaGeraSaidaEncadeada(filaNum, filasAtivas = [1], filasDesativadas = []) {
+  const fNum = Number(filaNum);
+  if (fNum < 1 || fNum >= 3) return false;
+  return filaTemEntradaEncadeada(fNum + 1, filasAtivas, filasDesativadas);
+}
+
+/**
  * Deriva o estado completo de todas as filas ativas a partir do log de eventos até o instante t.
  * @param {Array<Object>} eventos - Lista ordenada de eventos da sessão.
  * @param {number} [t=Infinity] - Instante limite (epoch ms). Padrão: Infinity.
@@ -72,6 +109,10 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         filaObj.totalEventos++;
       }
 
+      const dispChegadaNome = (ev.encadeado || ev.origem === 'encadeada')
+        ? (ev.dispositivoNome ? `${ev.dispositivoNome} (encadeada)` : 'encadeada')
+        : (ev.dispositivoNome || 'Desconhecido');
+
       pessoas.set(chavePessoa, {
         pessoa: pId,
         fila: fNum,
@@ -79,12 +120,13 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         chegadaMs: ev.t,
         atendimentoMs: null,
         anulacaoMs: null,
-        dispositivoChegada: ev.dispositivoNome || 'Desconhecido',
+        dispositivoChegada: dispChegadaNome,
         dispositivoAtendimento: null,
         esperaMs: null,
         intervaloAtendimentoMs: null,
         ajuste: !!ev.ajuste,
-        encadeado: !!ev.encadeado
+        encadeado: !!ev.encadeado,
+        origem: ev.origem || (ev.encadeado ? 'encadeada' : 'manual')
       });
 
       filaObj.fila.push(pId);
@@ -165,13 +207,15 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         filaObj.contadores.atendidas = Math.max(0, filaObj.contadores.atendidas - 1);
         filaObj.contadores.revertidas++;
 
-        // Encadeamento Fila 1 -> Fila 2: reverter a catraca da Fila 1 desfaz a entrada na Fila 2
-        if (fNum === 1 && filas[2].ativa) {
-          const idxFila2 = filas[2].fila.indexOf(pId);
-          if (idxFila2 !== -1) {
-            filas[2].fila.splice(idxFila2, 1);
-            filas[2].contadores.chegadas = Math.max(0, filas[2].contadores.chegadas - 1);
-            pessoas.delete(`2_${pId}`);
+        // Encadeamento (Fila 1 -> Fila 2 e Fila 2 -> Fila 3):
+        // Reverter o atendimento na fila anterior desfaz a entrada na fila seguinte
+        const proxFila = fNum + 1;
+        if (filas[proxFila] && filas[proxFila].ativa) {
+          const idxProx = filas[proxFila].fila.indexOf(pId);
+          if (idxProx !== -1) {
+            filas[proxFila].fila.splice(idxProx, 1);
+            filas[proxFila].contadores.chegadas = Math.max(0, filas[proxFila].contadores.chegadas - 1);
+            pessoas.delete(`${proxFila}_${pId}`);
           }
         }
       }
@@ -214,14 +258,21 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
 
     // Fila ativa sem nenhum evento é "semDados"
     fo.semDados = fo.ativa && fo.totalEventos === 0;
+
+    // Propriedades diretas de conveniência para contadores
+    fo.atendidas = fo.contadores.atendidas;
+    fo.chegadas = fo.contadores.chegadas;
+    fo.anuladas = fo.contadores.anuladas;
   }
 
   // Compatibilidade com raiz (Fila 1) para testes e interfaces legadas
   const f1 = filas[1];
   const pessoasArray = Array.from(pessoas.values());
+  const filasDesativadasArray = Array.from(filasDesativadasMap.keys());
 
   return {
     filasAtivas: filasAtivasConfig,
+    filasDesativadas: filasDesativadasArray,
     filas,
     pessoas: pessoasArray,
     // Propriedades raiz para compatibilidade estrita com Fila 1:
@@ -244,6 +295,9 @@ function criarEstruturaFila(id, ativa, desativadaEm) {
     fila: [],
     primeiraDaFila: null,
     esperaNaCabecaMs: 0,
+    atendidas: 0,
+    chegadas: 0,
+    anuladas: 0,
     contadores: {
       chegadas: 0,
       atendidas: 0,
@@ -300,9 +354,11 @@ export function diffEstado(anterior, novo) {
       p => (p.fila || 1) === fNum && !pessoasAntigasFila.has(p.pessoa)
     );
     for (const p of novasPessoas) {
-      if (fNum === 2 && p.encadeado) {
-        // Encadeamento Fila 1 -> Fila 2
-        operacoes.push({ op: 'transferir', deFila: 1, paraFila: 2, pessoa: p.pessoa });
+      if (p.encadeado && fNum > 1) {
+        // Encadeamento de filas: F1 -> F2 (deFila: 1) ou F2 -> F3 (deFila: 2)
+        const fOrigem = fNum - 1;
+        operacoes.push({ op: 'transferir', pessoa: p.pessoa, fila: fOrigem, deFila: fOrigem, paraFila: fNum });
+        operacoes.push({ op: 'entrar', fila: fNum, pessoa: p.pessoa, ajuste: !!p.ajuste });
       } else {
         operacoes.push({ op: 'entrar', fila: fNum, pessoa: p.pessoa, ajuste: !!p.ajuste });
       }

@@ -1,0 +1,10 @@
+{"t":1793823039349,"tipo":"desconexao","dispositivoId":"cel_wudqvey_mw2jron7","dispositivoNome":"Celular","causa":"socket_fechado"}
+{"t":1793823043708,"tipo":"conexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","area":"1"}
+{"t":1793823043725,"tipo":"desconexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","causa":"socket_fechado"}
+{"t":1793823043791,"tipo":"conexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","area":"1"}
+{"t":1793823049080,"tipo":"conexao","dispositivoId":"cel_by1m4pi_mw2jxesw","dispositivoNome":"Celular","area":"3"}
+{"t":1793823060649,"tipo":"mudanca_area","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","deArea":"1","paraArea":"2","autor":"Celular"}
+{"t":1793823060651,"tipo":"mudanca_area","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","paraArea":"2","autor":"Celular"}
+{"t":1793823087499,"tipo":"desconexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","causa":"socket_fechado"}
+{"t":1793823087805,"tipo":"conexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","area":"2"}
+{"t":1793823109975,"tipo":"desconexao","dispositivoId":"cel_k2ey4bd_mw2jxcph","dispositivoNome":"Celular","causa":"socket_fechado"}

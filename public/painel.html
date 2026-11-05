@@ -318,9 +318,10 @@
           <!-- SELEÇÃO DE FILAS E ATALHOS -->
           <div class="form-group full-span" style="background:var(--bg-subtle); padding:10px; border-radius:8px;">
             <label style="font-weight:700; margin-bottom:4px;">Filas a Coletar nesta Sessão (mínimo 1):</label>
-            <div style="display:flex; gap:8px; margin-bottom:8px;">
+            <div style="display:flex; gap:8px; margin-bottom:8px; flex-wrap:wrap;">
               <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1])">Somente Fila 1</button>
               <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1, 2])">Filas 1 e 2</button>
+              <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([2, 3])">Filas 2 e 3</button>
               <button type="button" class="btn btn-secondary" style="font-size:0.75rem; padding:3px 8px;" onclick="PainelApp.aplicarPresetFilas([1, 2, 3])">Todas (1, 2 e 3)</button>
             </div>
 
@@ -360,7 +361,7 @@
 
             <!-- Fila 3 -->
             <div style="display:grid; grid-template-columns:1fr 1fr 80px; gap:6px; align-items:center;">
-              <input type="text" id="rot-f3-cheg" value="SAIU DAS MESAS" title="Entrada Fila 3" placeholder="Entrada Fila 3">
+              <input type="text" id="rot-f3-cheg" value="SAIU DAS MESAS" title="Entrada Fila 3" placeholder="Entrada Fila 3 (se F2 inativa)">
               <input type="text" id="rot-f3-saida" value="PASSOU NA SAÍDA" title="Saída Fila 3" placeholder="Saída Fila 3">
               <input type="number" id="srv-f3" value="1" min="1" title="Servidores F3" placeholder="Serv. F3">
             </div>

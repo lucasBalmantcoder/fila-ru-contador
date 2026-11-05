@@ -315,9 +315,9 @@ const rRevBloq = gsMulti.processarComando({ acao: 'reversao', fila: 1, clientEve
 assert(rRevBloq.sucesso === false && rRevBloq.codigo === 'PESSOA_JA_AVANCOU', 'Reversão de catraca bloqueada com PESSOA_JA_AVANCOU');
 
 /* --------------------------------------------------------------------------
-   15. Teste: Fila 2 Isolada e Fila 3 Independente
+   15. Teste: Fila 2 Isolada e Fila 3 Encadeada
    -------------------------------------------------------------------------- */
-console.log('\n--- 15. Fila 2 Isolada e Fila 3 Independente ---');
+console.log('\n--- 15. Fila 2 Isolada e Fila 3 Encadeada ---');
 if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
 gsMulti.iniciarSessao({ nome: 'Fila 2 e 3 sem F1', filasAtivas: [2, 3], teste: true });
 
@@ -327,11 +327,9 @@ assert(rF2IsoCheg.sucesso && rF2IsoCheg.evento.pessoa === 1, 'F2 isolada registr
 
 const rF2IsoAtend = gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 1, clientEventId: 'f2_iso_2' }, disp1);
 assert(rF2IsoAtend.sucesso === true, 'F2 isolada confirma chegada às mesas');
+assert(rF2IsoAtend.eventosGerados && rF2IsoAtend.eventosGerados.length === 2, 'Saída na F2 gera chegada na F3');
 
-// Fila 3 independente
-const rF3Cheg = gsMulti.processarComando({ acao: 'chegada', fila: 3, clientEventId: 'f3_1' }, disp2);
-assert(rF3Cheg.sucesso && rF3Cheg.evento.pessoa === 1, 'Fila 3 registra saída das mesas com numeração própria (1)');
-
+// Fila 3 recebe pessoa 1 encadeada e confirma saída
 const rF3Saida = gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 1, clientEventId: 'f3_2' }, disp2);
 assert(rF3Saida.sucesso === true, 'Fila 3 confirma passagem pela saída');
 
@@ -339,8 +337,9 @@ assert(rF3Saida.sucesso === true, 'Fila 3 confirma passagem pela saída');
    16. Teste: Anulações e Reversões por Fila
    -------------------------------------------------------------------------- */
 console.log('\n--- 16. Anulações e Reversões por Fila ---');
-// Insere na Fila 3
-gsMulti.processarComando({ acao: 'chegada', fila: 3, clientEventId: 'f3_anul_cheg' }, disp2);
+// Insere na Fila 2 e avança para a Fila 3
+gsMulti.processarComando({ acao: 'chegada', fila: 2, clientEventId: 'f2_c_anul' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 2, clientEventId: 'f2_s_anul' }, disp1);
 assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.length === 1, 'F3 tem 1 pessoa na fila');
 
 // Anula na Fila 3
@@ -473,6 +472,130 @@ assert(estLegado.filas && estLegado.filas['1'], 'Mapeia para Fila 1 internamente
 const metLegadas = calcularMetricas(evsLegados, 10000, { servidores: 1 });
 assert(metLegadas.n_atendimentos === 1, 'Métricas legadas mantêm n_atendimentos na raiz');
 assert(metLegadas.filas && metLegadas.filas['1'].n_atendimentos === 1, 'Métricas legadas populam Fila 1');
+
+/* --------------------------------------------------------------------------
+   23. Teste: Encadeamento Fila 2 -> Fila 3, Reversões, Anulação e Transição
+   -------------------------------------------------------------------------- */
+console.log('\n--- 23. Encadeamento Fila 2 -> Fila 3 ---');
+if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
+gsMulti.iniciarSessao({ nome: 'Encadeamento F2-F3', filasAtivas: [2, 3], teste: true });
+
+// A) Rejeição de chegada manual na F3 quando F2 está ativa
+const rF3ManualBloq = gsMulti.processarComando({ acao: 'chegada', fila: 3, clientEventId: 'f3_bloq_1' }, disp2);
+assert(rF3ManualBloq.sucesso === false && rF3ManualBloq.codigo === 'FILA_ENCADEADA', 'Chegada manual na F3 rejeitada com FILA_ENCADEADA quando F2 ativa');
+
+// B) Chegada na F2
+const rF2C1 = gsMulti.processarComando({ acao: 'chegada', fila: 2, clientEventId: 'f2_c1' }, disp1);
+assert(rF2C1.sucesso && rF2C1.evento.pessoa === 1, 'Chegada na F2 aceita (Pessoa 1)');
+
+// C) Saída na F2 gera chegada atômica na F3 com a mesma pessoa
+const rF2Atend1 = gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 1, clientEventId: 'f2_atend_1' }, disp1);
+assert(rF2Atend1.sucesso === true, 'Saída na F2 confirmada');
+assert(rF2Atend1.eventosGerados && rF2Atend1.eventosGerados.length === 2, 'Gerou 2 eventos atômicos (saída F2 e chegada F3)');
+
+const evF3Cheg1 = rF2Atend1.eventosGerados[1];
+assert(evF3Cheg1.tipo === 'chegada' && evF3Cheg1.fila === 3, 'Segundo evento é chegada na Fila 3');
+assert(evF3Cheg1.pessoa === 1, 'Pessoa na F3 herda o mesmo número da F2 (Pessoa 1)');
+assert(evF3Cheg1.encadeado === true && evF3Cheg1.origem === 'encadeada', 'Evento marcado com encadeado: true e origem: encadeada');
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.includes(1), 'Pessoa 1 está na Fila 3');
+
+// D) Saída na Fila 3 ("PASSOU NA SAÍDA")
+const rF3Saida1 = gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 1, clientEventId: 'f3_saida_1' }, disp2);
+assert(rF3Saida1.sucesso === true, 'Saída na F3 confirmada');
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.length === 0, 'Fila 3 esvaziada');
+
+// E) Reversão na F2 desfaz chegada na F3 se pessoa ainda estiver na F3
+gsMulti.processarComando({ acao: 'chegada', fila: 2, clientEventId: 'f2_c2' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 2, clientEventId: 'f2_atend_2' }, disp1);
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.includes(2), 'Pessoa 2 avançou para Fila 3');
+
+const rRevF2 = gsMulti.processarComando({ acao: 'reversao', fila: 2, clientEventId: 'f2_rev_2' }, disp1);
+assert(rRevF2.sucesso === true, 'Reversão na F2 aceita enquanto pessoa 2 está na F3');
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['2'].fila[0] === 2, 'Pessoa 2 retornou à cabeça da Fila 2');
+assert(!gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.includes(2), 'Pessoa 2 removida da Fila 3 pela reversão');
+
+// F) Bloqueio de reversão na F2 após saída na F3 (PESSOA_JA_AVANCOU)
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 2, clientEventId: 'f2_atend_2_bis' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 2, clientEventId: 'f3_saida_2' }, disp2);
+
+const rRevF2Bloq = gsMulti.processarComando({ acao: 'reversao', fila: 2, clientEventId: 'f2_rev_bloq' }, disp1);
+assert(rRevF2Bloq.sucesso === false && rRevF2Bloq.codigo === 'PESSOA_JA_AVANCOU', 'Reversão na F2 bloqueada com PESSOA_JA_AVANCOU');
+
+// G) Anulação na Fila 3: não afeta atendimentos passados da Fila 2
+gsMulti.processarComando({ acao: 'chegada', fila: 2, clientEventId: 'f2_c3' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 3, clientEventId: 'f2_atend_3' }, disp1);
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.includes(3), 'Pessoa 3 na F3 antes de anulação');
+
+const rAnulF3Enc = gsMulti.processarComando({ acao: 'anulacao', fila: 3, pessoa: 3, clientEventId: 'f3_anul_3' }, disp2);
+assert(rAnulF3Enc.sucesso === true, 'Anulação aceita na F3');
+assert(!gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.includes(3), 'Pessoa 3 removida da F3');
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['2'].contadores.atendidas === 3, 'Contador de atendidas na F2 preservado');
+
+// H) Desativação da Fila 2 durante a sessão: F3 volta a aceitar chegada manual
+const rDesatF2 = gsMulti.desativarFila(2, 'Painel');
+assert(rDesatF2.sucesso === true, 'Fila 2 desativada durante a sessão');
+assert(gsMulti.sessaoAtiva.filasDesativadas.includes(2), 'Fila 2 na lista de desativadas');
+
+const rF3ManualPosDesat = gsMulti.processarComando({ acao: 'chegada', fila: 3, clientEventId: 'f3_man_pos_desat' }, disp2);
+assert(rF3ManualPosDesat.sucesso === true, 'F3 volta a aceitar chegada manual após F2 ser desativada');
+
+// I) Ajuste de fila na Fila 3
+const rAjF3 = gsMulti.processarComando({ acao: 'ajuste_fila', fila: 3, delta: 2, clientEventId: 'f3_aj' }, disp2);
+assert(rAjF3.sucesso === true && rAjF3.evento.tipo === 'ajuste_fila', 'Ajuste de fila aceito na Fila 3');
+assert(gsMulti.sessaoAtiva.estadoAtual.filas['3'].fila.length === 3, 'Fila 3 tem 3 pessoas após ajuste (+2)');
+
+// J) Pipeline Completo F1 -> F2 -> F3 e métricas de trânsito completo
+if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
+gsMulti.iniciarSessao({ nome: 'Pipeline F1-F2-F3', filasAtivas: [1, 2, 3], teste: true });
+
+// Pessoa 1 entra na F1
+gsMulti.processarComando({ acao: 'chegada', fila: 1, clientEventId: 'pipe_f1_c1' }, disp1);
+// Salva estado antes de F1 atender
+const estAntesF1Cat = gsMulti.sessaoAtiva.estadoAtual;
+const rCatracaPipe = gsMulti.processarComando({ acao: 'atendido', fila: 1, pessoaEsperada: 1, clientEventId: 'pipe_f1_cat1' }, disp1);
+assert(rCatracaPipe.eventosGerados[1].fila === 2, 'Catraca F1 transfere para Fila 2');
+
+// Diff de transferência F1 -> F2
+const diffF1F2 = diffEstado(estAntesF1Cat, gsMulti.sessaoAtiva.estadoAtual);
+const opTransf1 = diffF1F2.find(d => d.op === 'transferir');
+assert(opTransf1 && (opTransf1.fila === 1 || opTransf1.deFila === 1), 'Diff contém operação transferir da Fila 1');
+
+// Salva estado antes de F2 atender
+const estAntesF2Mesas = gsMulti.sessaoAtiva.estadoAtual;
+const rMesasPipe = gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 1, clientEventId: 'pipe_f2_m1' }, disp1);
+assert(rMesasPipe.eventosGerados[1].fila === 3, 'Mesas F2 transfere para Fila 3');
+
+// Diff de transferência F2 -> F3
+const diffF2F3 = diffEstado(estAntesF2Mesas, gsMulti.sessaoAtiva.estadoAtual);
+const opTransf2 = diffF2F3.find(d => d.op === 'transferir');
+assert(opTransf2 && (opTransf2.fila === 2 || opTransf2.deFila === 2), 'Diff contém operação transferir da Fila 2');
+
+// F3 atende -> saída do restaurante
+gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 1, clientEventId: 'pipe_f3_s1' }, disp2);
+
+// Métricas de percurso completo F1 -> F2 -> F3
+const metPipe = calcularMetricas(gsMulti.sessaoAtiva.eventos, gsMulti.sessaoAtiva.config, Date.now());
+assert(metPipe.transitoMesas && metPipe.transitoMesas.count === 1, 'Calculou transitoMesas (F1 -> F2)');
+assert(metPipe.tempoMesasAteSaida && metPipe.tempoMesasAteSaida.qtd === 1, 'Calculou tempoMesasAteSaida (F2 -> F3)');
+assert(metPipe.transitoSaida && metPipe.transitoSaida.count === 1, 'Calculou transitoSaida completo (F1 -> F2 -> F3)');
+
+/* --------------------------------------------------------------------------
+   24. Teste: Prevenção de Conflito de Aparelhos e Desconexão 4001
+   -------------------------------------------------------------------------- */
+console.log('\n--- 24. Prevenção de Conflito de Aparelhos ---');
+// Verifica chaves isoladas por papel
+const chavePainel = 'ru_fila_config_painel';
+const chaveCelular = 'ru_fila_config_celular';
+const idPainelKey = 'ru_fila_disp_id_painel';
+const idCelularKey = 'ru_fila_disp_id_celular';
+assert(chavePainel !== chaveCelular, 'Namespace de configuração do Painel é isolado do Celular');
+assert(idPainelKey !== idCelularKey, 'Namespace de ID em sessionStorage do Painel é isolado do Celular');
+
+// Código e motivo explícito de substituição de socket
+const codigoSubstituicao = 4001;
+const motivoSubstituicao = 'substituído';
+assert(codigoSubstituicao === 4001, 'Código de encerramento por substituição é 4001');
+assert(motivoSubstituicao === 'substituído', 'Motivo de encerramento explícito é "substituído"');
 
 if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
 

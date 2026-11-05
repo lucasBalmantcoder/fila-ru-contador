@@ -193,13 +193,14 @@ const PainelApp = {
         document.getElementById("kpi-fila-max").textContent =
             this.filaMaxAtingida;
         document.getElementById("kpi-atendidos").textContent = f1
-            ? f1.atendidas
-            : estado.contadores.atendidas;
+            ? (f1.contadores?.atendidas ?? f1.atendidas ?? 0)
+            : (estado.contadores ? estado.contadores.atendidas : 0);
         document.getElementById("kpi-chegadas").textContent = f1
-            ? f1.chegadas
-            : estado.contadores.chegadas;
+            ? (f1.contadores?.chegadas ?? f1.chegadas ?? 0)
+            : (estado.contadores ? estado.contadores.chegadas : 0);
         document.getElementById("kpi-anulados").textContent =
-            estado.contadores.anuladas;
+            (f1 ? (f1.contadores?.anuladas ?? f1.anuladas) : null) ??
+            (estado.contadores ? estado.contadores.anuladas : 0);
 
         document.getElementById("kpi-vazao").innerHTML =
             `${formatarNumero(estado.vazaoRecente, 1)} <span style="font-size:0.8rem">p/min</span>`;
@@ -334,15 +335,15 @@ const PainelApp = {
             <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; background:var(--bg-subtle); padding:6px; border-radius:6px; text-align:center; margin-top:4px;">
               <div>
                 <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Na Fila</span>
-                <strong style="font-size:1.1rem; color:${cfg.cor};">${dados.fila ? dados.fila.length : 0}</strong>
+                <strong style="font-size:1.1rem; color:${cfg.cor};">${dados.fila ? dados.fila.length : (dados.contadores?.naFila ?? 0)}</strong>
               </div>
               <div>
                 <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Passagens</span>
-                <strong style="font-size:1.1rem; color:var(--primary);">${dados.atendidas || 0}</strong>
+                <strong style="font-size:1.1rem; color:var(--primary);">${dados.contadores?.atendidas ?? dados.atendidas ?? 0}</strong>
               </div>
               <div>
                 <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Chegadas${herdaEntrada ? " (auto)" : ""}</span>
-                <strong style="font-size:1.1rem;">${dados.chegadas || 0}</strong>
+                <strong style="font-size:1.1rem;">${dados.contadores?.chegadas ?? dados.chegadas ?? 0}</strong>
               </div>
             </div>
 
@@ -541,13 +542,14 @@ const PainelApp = {
                 detalhe = "Observação Encerrada";
             }
 
+            const ehEncadeado = !!(ev.encadeado || ev.origem === 'encadeada');
             tr.innerHTML = `
         <td>${ev.seq || "--"}</td>
         <td>${formatarHoraLocal(ev.t)}</td>
         <td><strong>${filaStr}</strong></td>
-        <td><strong>${ev.tipo.toUpperCase()}</strong></td>
+        <td><strong>${ev.tipo.toUpperCase()}${ehEncadeado ? ' <span style="font-size:0.75rem; color:var(--primary);">(encadeada)</span>' : ''}</strong></td>
         <td>${detalhe}</td>
-        <td><span class="badge-autor">${ev.dispositivoNome || "Servidor"}</span></td>
+        <td><span class="badge-autor">${ev.dispositivoNome || (ehEncadeado ? 'Encadeada' : 'Servidor')}</span></td>
       `;
             corpo.appendChild(tr);
         });

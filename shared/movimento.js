@@ -423,8 +423,8 @@ export class MotorMovimento {
     } else if (tipo === 'atendimento') {
       const pessoa = evento.pessoa;
       const chave = `f${fNum}_p${pessoa}`;
-      const ehEncadeado = (fNum === 1 && this.encadeamentos.includes('1>2') && estadoNovo.filasAtivas?.includes(2)) ||
-                          (fNum === 2 && this.encadeamentos.includes('2>3') && estadoNovo.filasAtivas?.includes(3));
+      const ehEncadeado = (fNum === 1 && this.encadeamentos.includes('1>2') && estadoNovo.filasAtivas?.includes(2) && estadoNovo.filas?.[2]?.ativa !== false) ||
+                          (fNum === 2 && this.encadeamentos.includes('2>3') && estadoNovo.filasAtivas?.includes(3) && estadoNovo.filas?.[3]?.ativa !== false);
 
       if (ehEncadeado) {
         const proxFila = fNum + 1;

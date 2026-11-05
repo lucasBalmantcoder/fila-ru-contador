@@ -1,6 +1,6 @@
 {
-  "id": "sessao_2026-11-04T03-43-48-282Z_mf9nf",
-  "nome": "Almoço RU - Quinta",
+  "id": "sessao_2026-11-04T20-25-18-492Z_azuq2",
+  "nome": "Almoço RU - quarta (essa)",
   "local": "RU Central",
   "observacoes": "",
   "duracaoPrevistaMin": 60,
@@ -33,10 +33,10 @@
   "limiarPausaSeg": 60,
   "teste": false,
   "status": "encerrada",
-  "inicioMs": 1793763828282,
-  "fimMs": 1793764391419,
+  "inicioMs": 1793823918492,
+  "fimMs": 1793827838878,
   "config": {
-    "nome": "Almoço RU - Quinta",
+    "nome": "Almoço RU - quarta (essa)",
     "local": "RU Central",
     "observacoes": "",
     "duracaoPrevistaMin": 60,

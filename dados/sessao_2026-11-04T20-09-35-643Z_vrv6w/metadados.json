@@ -1,5 +1,5 @@
 {
-  "id": "sessao_2026-11-04T03-59-02-469Z_yip9h",
+  "id": "sessao_2026-11-04T20-09-35-643Z_vrv6w",
   "nome": "Almoço RU - Quinta",
   "local": "RU Central",
   "observacoes": "",
@@ -32,9 +32,9 @@
   "blocoMin": 5,
   "limiarPausaSeg": 60,
   "teste": false,
-  "status": "ativa",
-  "inicioMs": 1793764742469,
-  "fimMs": null,
+  "status": "encerrada",
+  "inicioMs": 1793822975643,
+  "fimMs": 1793823131886,
   "config": {
     "nome": "Almoço RU - Quinta",
     "local": "RU Central",

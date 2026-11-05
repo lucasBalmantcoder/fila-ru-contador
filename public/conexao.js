@@ -1,28 +1,89 @@
 /**
  * public/conexao.js
- * Gerenciador de conexão WebSocket, reconexão automática ultra-resiliente,
- * recuperação instantânea após tela apagada/bloqueio (< 3s), sincronização de relógio,
- * batimento (ping) a cada 5s com detecção de queda em 8s, fallback por consulta HTTP (polling)
- * e fila de saída persistente em localStorage.
+ * Gerenciador de conexão WebSocket, reconexão automática com backoff exponencial,
+ * isolamento de identificadores por aba e papel (sessionStorage),
+ * mitigação de conflitos de sessão, sincronização de relógio,
+ * batimento (ping) a cada 5s com detecção de queda e fila de saída persistente.
  */
 
 const STORAGE_KEY_OFFLINE = 'ru_fila_offline_queue_v2';
 const STORAGE_KEY_PIN = 'ru_fila_pin_salvo';
-const STORAGE_KEY_DISP = 'ru_fila_disp_info_v2';
+const STORAGE_KEY_DISP_LEGADO = 'ru_fila_disp_info_v2';
 
 export class GerenciadorConexao {
   constructor(opcoes = {}) {
     this.ws = null;
-    this.pin = localStorage.getItem(STORAGE_KEY_PIN) || '1234';
-    this.dispositivo = JSON.parse(localStorage.getItem(STORAGE_KEY_DISP) || 'null') || {
-      id: `cel_${Math.random().toString(36).substring(2, 9)}`,
-      nome: 'Celular',
-      papel: 'ambos',
-      area: '1'
+    this.pin = (typeof localStorage !== 'undefined' ? localStorage.getItem(STORAGE_KEY_PIN) : null) || '1234';
+
+    // Determina o papel do cliente: 'painel' ou 'celular'
+    this.papel = opcoes.papel === 'painel' ? 'painel' : 'celular';
+    const chaveConfig = `ru_fila_config_${this.papel}`;
+    const chaveIdSession = `ru_fila_disp_id_${this.papel}`;
+
+    // 1. Carrega configurações salvas (nome, área, etc.), com migração retrocompatível
+    let dadosSalvos = null;
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const rawConfig = localStorage.getItem(chaveConfig);
+        if (rawConfig) {
+          dadosSalvos = JSON.parse(rawConfig);
+        } else {
+          // Migração do formato legado ru_fila_disp_info_v2
+          const rawLegado = localStorage.getItem(STORAGE_KEY_DISP_LEGADO);
+          if (rawLegado) {
+            const objLegado = JSON.parse(rawLegado);
+            if (this.papel === 'painel' && (objLegado.papel === 'painel' || objLegado.nome?.includes('Painel'))) {
+              dadosSalvos = objLegado;
+            } else if (this.papel === 'celular' && objLegado.papel !== 'painel') {
+              dadosSalvos = objLegado;
+            }
+          }
+        }
+      }
+    } catch (e) {}
+
+    // 2. Garante identificador único de aparelho em sessionStorage (por aba e papel)
+    let dispId = null;
+    try {
+      if (typeof sessionStorage !== 'undefined') {
+        dispId = sessionStorage.getItem(chaveIdSession);
+      }
+    } catch (e) {}
+
+    if (!dispId) {
+      const prefixo = this.papel === 'painel' ? 'painel' : 'cel';
+      dispId = `${prefixo}_${Math.random().toString(36).substring(2, 9)}_${Date.now().toString(36)}`;
+      try {
+        if (typeof sessionStorage !== 'undefined') {
+          sessionStorage.setItem(chaveIdSession, dispId);
+        }
+      } catch (e) {}
+    }
+
+    // 3. Remove identificadores do localStorage legado para evitar colisão entre abas ou aparelhos
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const rawLegado = localStorage.getItem(STORAGE_KEY_DISP_LEGADO);
+        if (rawLegado) {
+          const objLegado = JSON.parse(rawLegado);
+          if (objLegado && objLegado.id) {
+            delete objLegado.id;
+            localStorage.setItem(STORAGE_KEY_DISP_LEGADO, JSON.stringify(objLegado));
+          }
+        }
+      }
+    } catch (e) {}
+
+    this.dispositivo = {
+      id: dispId,
+      nome: dadosSalvos?.nome || (this.papel === 'painel' ? 'Painel Notebook' : 'Celular'),
+      papel: opcoes.papel || (this.papel === 'painel' ? 'painel' : 'ambos'),
+      area: dadosSalvos?.area || (this.papel === 'painel' ? 'todas' : '1')
     };
 
+    this.substituido = false;
     this.ultimoSeqConhecido = 0;
-    this.estadoConexao = 'offline'; // 'conectado' | 'reconectando' | 'polling' | 'offline'
+    this.estadoConexao = 'offline'; // 'conectado' | 'reconectando' | 'polling' | 'offline' | 'substituido'
     this.tentativasReconexao = 0;
     this.timerReconexao = null;
     this.timerPing = null;
@@ -50,7 +111,7 @@ export class GerenciadorConexao {
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'visible') {
           console.log('[CONEXAO] Tela reativada (visibilitychange). Verificando conexão...');
-          if (!this.estaConectado()) {
+          if (!this.estaConectado() && !this.substituido) {
             this.reconectarImediatamente();
           }
         }
@@ -59,21 +120,23 @@ export class GerenciadorConexao {
 
     if (typeof window !== 'undefined') {
       window.addEventListener('pageshow', () => {
-        if (!this.estaConectado()) {
+        if (!this.estaConectado() && !this.substituido) {
           console.log('[CONEXAO] pageshow detectado. Reconectando...');
           this.reconectarImediatamente();
         }
       });
 
       window.addEventListener('focus', () => {
-        if (!this.estaConectado()) {
+        if (!this.estaConectado() && !this.substituido) {
           this.reconectarImediatamente();
         }
       });
 
       window.addEventListener('online', () => {
         console.log('[CONEXAO] Rede restabelecida (online).');
-        this.reconectarImediatamente();
+        if (!this.substituido) {
+          this.reconectarImediatamente();
+        }
       });
 
       window.addEventListener('beforeunload', (e) => {
@@ -93,15 +156,31 @@ export class GerenciadorConexao {
     if (papel) this.dispositivo.papel = papel;
 
     try {
-      localStorage.setItem(STORAGE_KEY_PIN, this.pin);
-      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_PIN, this.pin);
+        const configSalvar = {
+          nome: this.dispositivo.nome,
+          area: this.dispositivo.area,
+          papel: this.dispositivo.papel
+        };
+        localStorage.setItem(`ru_fila_config_${this.papel}`, JSON.stringify(configSalvar));
+        localStorage.setItem(STORAGE_KEY_DISP_LEGADO, JSON.stringify(configSalvar));
+      }
     } catch (e) {}
   }
 
   mudarArea(novaArea) {
     this.dispositivo.area = String(novaArea);
     try {
-      localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+      if (typeof localStorage !== 'undefined') {
+        const configSalvar = {
+          nome: this.dispositivo.nome,
+          area: this.dispositivo.area,
+          papel: this.dispositivo.papel
+        };
+        localStorage.setItem(`ru_fila_config_${this.papel}`, JSON.stringify(configSalvar));
+        localStorage.setItem(STORAGE_KEY_DISP_LEGADO, JSON.stringify(configSalvar));
+      }
     } catch (e) {}
 
     if (this.estaConectado()) {
@@ -115,6 +194,11 @@ export class GerenciadorConexao {
   }
 
   conectar() {
+    if (this.substituido) {
+      console.warn('[WS] Conexão cancelada: o identificador deste aparelho foi substituído por outra conexão ativa.');
+      return;
+    }
+
     if (this.ws && (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)) {
       return;
     }
@@ -149,9 +233,21 @@ export class GerenciadorConexao {
       }
     };
 
-    this.ws.onclose = () => {
-      console.warn('[WS] Conexão encerrada pelo servidor ou suspensa pelo aparelho.');
+    this.ws.onclose = (event) => {
       this.pararPing();
+
+      // Código 4001 ou motivo "substituído" indica fechamento proposital pelo servidor
+      const foiSubstituido = (event && (event.code === 4001 || event.reason === 'substituído' || event.reason === 'substituido'));
+      if (foiSubstituido) {
+        console.warn(`[WS] Conexão encerrada pelo servidor: aparelho substituído por outra aba ou conexão ativa (código ${event.code}). Reconexão desativada.`);
+        this.substituido = true;
+        this.pararFallbackPolling();
+        this.atualizarStatus('substituido');
+        this.onStatusConexao('substituido', 0);
+        return;
+      }
+
+      console.warn('[WS] Conexão encerrada pelo servidor ou suspensa pelo aparelho.');
       this.iniciarContagemQueda();
       this.agendarReconexao();
     };
@@ -165,6 +261,8 @@ export class GerenciadorConexao {
   }
 
   iniciarContagemQueda() {
+    if (this.substituido) return;
+
     if (!this.momentoQueda) {
       this.momentoQueda = Date.now();
     }
@@ -179,7 +277,7 @@ export class GerenciadorConexao {
         }
 
         const decorrido = Date.now() - (this.momentoQueda || Date.now());
-        if (decorrido >= 5000 && !this.timerFallbackPolling) {
+        if (decorrido >= 5000 && !this.timerFallbackPolling && !this.substituido) {
           console.warn('[CONEXAO] Mais de 5s desconectado. Iniciando fallback por consulta HTTP (GET /api/estado)...');
           this.iniciarFallbackPolling();
         }
@@ -188,11 +286,12 @@ export class GerenciadorConexao {
   }
 
   iniciarFallbackPolling() {
+    if (this.substituido) return;
     this.pararFallbackPolling();
     this.atualizarStatus('polling');
 
     const executarPoll = async () => {
-      if (this.estaConectado()) {
+      if (this.estaConectado() || this.substituido) {
         this.pararFallbackPolling();
         return;
       }
@@ -244,6 +343,7 @@ export class GerenciadorConexao {
   }
 
   desconectar() {
+    this.substituido = false;
     this.pararPing();
     this.pararFallbackPolling();
     if (this.timerReconexao) {
@@ -270,6 +370,7 @@ export class GerenciadorConexao {
   }
 
   reconectarImediatamente() {
+    this.substituido = false;
     if (this.timerReconexao) {
       clearTimeout(this.timerReconexao);
       this.timerReconexao = null;
@@ -304,9 +405,13 @@ export class GerenciadorConexao {
   }
 
   agendarReconexao() {
+    if (this.substituido) return;
     if (this.timerReconexao) clearTimeout(this.timerReconexao);
-    const atraso = Math.min(3000, 400 * Math.pow(1.4, this.tentativasReconexao));
+
+    // Backoff exponencial com limite: 1s, 2s, 4s, 8s até no máximo 10s
+    const atraso = Math.min(10000, 1000 * Math.pow(2, this.tentativasReconexao));
     this.tentativasReconexao++;
+
     this.timerReconexao = setTimeout(() => {
       this.conectar();
     }, atraso);
@@ -419,7 +524,9 @@ export class GerenciadorConexao {
       if (msg.novoPin) {
         this.pin = String(msg.novoPin).trim();
         try {
-          localStorage.setItem(STORAGE_KEY_PIN, this.pin);
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(STORAGE_KEY_PIN, this.pin);
+          }
         } catch (e) {}
         console.log('[CONEXAO] PIN atualizado pelo servidor para:', this.pin);
       }
@@ -437,7 +544,15 @@ export class GerenciadorConexao {
     if (msg.tipo === 'area_atualizada') {
       this.dispositivo.area = String(msg.area);
       try {
-        localStorage.setItem(STORAGE_KEY_DISP, JSON.stringify(this.dispositivo));
+        if (typeof localStorage !== 'undefined') {
+          const configSalvar = {
+            nome: this.dispositivo.nome,
+            area: this.dispositivo.area,
+            papel: this.dispositivo.papel
+          };
+          localStorage.setItem(`ru_fila_config_${this.papel}`, JSON.stringify(configSalvar));
+          localStorage.setItem(STORAGE_KEY_DISP_LEGADO, JSON.stringify(configSalvar));
+        }
       } catch (e) {}
       this.onAreaAtualizada(this.dispositivo.area);
       return;
@@ -532,6 +647,7 @@ export class GerenciadorConexao {
 
   obterFilaOffline() {
     try {
+      if (typeof localStorage === 'undefined') return [];
       const raw = localStorage.getItem(STORAGE_KEY_OFFLINE);
       return raw ? JSON.parse(raw) : [];
     } catch (e) {
@@ -541,7 +657,9 @@ export class GerenciadorConexao {
 
   salvarFilaOffline(fila) {
     try {
-      localStorage.setItem(STORAGE_KEY_OFFLINE, JSON.stringify(fila));
+      if (typeof localStorage !== 'undefined') {
+        localStorage.setItem(STORAGE_KEY_OFFLINE, JSON.stringify(fila));
+      }
     } catch (e) {}
   }
 

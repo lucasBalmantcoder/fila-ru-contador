@@ -8,7 +8,7 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
-import { derivarEstado, diffEstado } from '../shared/estado.js';
+import { derivarEstado, diffEstado, filaTemEntradaEncadeada, filaGeraSaidaEncadeada } from '../shared/estado.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -502,6 +502,24 @@ export class GerenciadorSessoes {
 
     switch (cmd.acao) {
       case 'chegada': {
+        // Se a fila possui entrada encadeada da fila anterior, a chegada manual é rejeitada
+        if (filaTemEntradaEncadeada(filaNum, filasAtivas, this.sessaoAtiva.filasDesativadas)) {
+          const filaAnt = filaNum - 1;
+          const etapas = {
+            2: 'pela confirmação na catraca (Fila 1)',
+            3: 'pela chegada às mesas (Fila 2)'
+          };
+          const detalheEtapa = etapas[filaNum] || `pela Fila ${filaAnt}`;
+          const msg = `A Fila ${filaNum} está encadeada com a Fila ${filaAnt}. As entradas são geradas automaticamente ${detalheEtapa}.`;
+          this.registrarRejeicao(cmd, autor, 'FILA_ENCADEADA', msg);
+          return {
+            sucesso: false,
+            codigo: 'FILA_ENCADEADA',
+            mensagem: msg,
+            clientEventId: cmd.clientEventId
+          };
+        }
+
         const numPessoa = this.sessaoAtiva.proximaPessoaPorFila[filaNum]++;
         this.sessaoAtiva.seq++;
         eventoCriado = {
@@ -589,25 +607,30 @@ export class GerenciadorSessoes {
           tCliente: cmd.tCliente || null
         };
 
-        // Encadeamento atômico Fila 1 -> Fila 2
-        // Se as Filas 1 e 2 estiverem ativas, passar pela catraca gera chegada imediata na Fila 2
-        const fila2Ativa = filasAtivas.includes(2) && !this.sessaoAtiva.filasDesativadas.has(2);
-        if (filaNum === 1 && fila2Ativa) {
+        // Encadeamento atômico entre filas (F1 -> F2 e F2 -> F3)
+        // Se a saída da fila atual gera chegada na próxima fila ativa:
+        if (filaGeraSaidaEncadeada(filaNum, filasAtivas, this.sessaoAtiva.filasDesativadas)) {
+          const proxFila = filaNum + 1;
           this.sessaoAtiva.seq++;
           eventoEncadeado = {
             seq: this.sessaoAtiva.seq,
             t: tEvento,
             tipo: 'chegada',
-            fila: 2,
+            fila: proxFila,
             pessoa: pessoaNaCabeca,
             encadeado: true,
+            origem: 'encadeada',
             ajuste: false,
             dispositivoId: autor.id,
             dispositivoNome: autor.nome,
-            clientEventId: `${cmd.clientEventId || `cat_${pessoaNaCabeca}`}_chain`,
+            clientEventId: `${cmd.clientEventId || `enc_${filaNum}_${pessoaNaCabeca}`}_chain`,
             tardio: ehTardio,
             tCliente: cmd.tCliente || null
           };
+          this.sessaoAtiva.proximaPessoaPorFila[proxFila] = Math.max(
+            this.sessaoAtiva.proximaPessoaPorFila[proxFila] || 1,
+            pessoaNaCabeca + 1
+          );
         }
         break;
       }
@@ -690,17 +713,22 @@ export class GerenciadorSessoes {
         atendidosFila.sort((a, b) => b.atendimentoMs - a.atendimentoMs);
         const ultimaAtendida = atendidosFila[0].pessoa;
 
-        // Regra de encadeamento Fila 1 -> Fila 2:
-        // A reversão da catraca (Fila 1) só é aceita se a pessoa AINDA estiver na Fila 2!
-        const fila2Ativa = filasAtivas.includes(2) && !this.sessaoAtiva.filasDesativadas.has(2);
-        if (filaNum === 1 && fila2Ativa) {
-          const estaNaFila2 = estadoAnterior.filas[2]?.fila.includes(ultimaAtendida);
-          if (!estaNaFila2) {
-            this.registrarRejeicao(cmd, autor, 'PESSOA_JA_AVANCOU', `Pessoa ${ultimaAtendida} já avançou na Fila 2 e não pode ser revertida.`);
+        // Regra de encadeamento (F1 -> F2 e F2 -> F3):
+        // A reversão do atendimento na fila atual só é aceita se a pessoa AINDA estiver na fila seguinte!
+        if (filaGeraSaidaEncadeada(filaNum, filasAtivas, this.sessaoAtiva.filasDesativadas)) {
+          const proxFila = filaNum + 1;
+          const estaNaProxFila = estadoAnterior.filas[proxFila]?.fila.includes(ultimaAtendida);
+          if (!estaNaProxFila) {
+            const nomesEtapasReversao = {
+              1: 'à catraca',
+              2: 'às mesas'
+            };
+            const destinoStr = nomesEtapasReversao[filaNum] || `à Fila ${filaNum}`;
+            this.registrarRejeicao(cmd, autor, 'PESSOA_JA_AVANCOU', `Pessoa ${ultimaAtendida} já avançou na Fila ${proxFila} e não pode ser revertida.`);
             return {
               sucesso: false,
               codigo: 'PESSOA_JA_AVANCOU',
-              mensagem: `A Pessoa ${ultimaAtendida} já concluiu ou foi alterada na Fila 2 e não pode retornar à catraca.`,
+              mensagem: `A Pessoa ${ultimaAtendida} já concluiu ou foi alterada na Fila ${proxFila} e não pode retornar ${destinoStr}.`,
               clientEventId: cmd.clientEventId
             };
           }

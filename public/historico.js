@@ -450,6 +450,23 @@ const HistoricoApp = {
     } else {
       if (cardTransito) cardTransito.style.display = 'none';
     }
+    // Card de Trânsito até a Saída (Fila 1 + Fila 2 + Fila 3)
+    const cardTransitoSaida = document.getElementById('card-transito-saida');
+    const ts = this.metricasAtuais?.transitoSaida;
+    if (ts && ts.count > 0) {
+      if (cardTransitoSaida) cardTransitoSaida.style.display = 'block';
+      const countEl = document.getElementById('ts-count');
+      const medEl = document.getElementById('ts-media');
+      const medianaEl = document.getElementById('ts-mediana');
+      const p90El = document.getElementById('ts-p90');
+      if (countEl) countEl.textContent = ts.count;
+      if (medEl) medEl.textContent = formatarDuracao(ts.mediaSeg * 1000).substring(3);
+      if (medianaEl) medianaEl.textContent = formatarDuracao(ts.medianaSeg * 1000).substring(3);
+      if (p90El) p90El.textContent = formatarDuracao(ts.p90Seg * 1000).substring(3);
+    } else {
+      if (cardTransitoSaida) cardTransitoSaida.style.display = 'none';
+    }
+
 
     // Gráfico Comparativo das Filas no Tempo
     this.renderizarGraficoComparativoFilas();
@@ -737,7 +754,7 @@ const HistoricoApp = {
 
     let totalAtendidas = 0;
     if (estado.filas) {
-      Object.values(estado.filas).forEach(f => { totalAtendidas += (f.atendidas || 0); });
+      Object.values(estado.filas).forEach(f => { totalAtendidas += (f.contadores?.atendidas ?? f.atendidas ?? 0); });
     } else if (estado.contadores) {
       totalAtendidas = estado.contadores.atendidas || 0;
     }

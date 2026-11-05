@@ -31,6 +31,9 @@ const tentativasPinPorIp = new Map(); // ip -> { contagem, bloqueadoAte }
 // Dispositivos conectados via WebSocket: Map(ws -> Dispositivo)
 const conexoesAtivas = new Map();
 
+// Rastreamento de log de substituição por dispositivoId para evitar tempestade no terminal
+const rateLimitSubstituicaoLog = new Map(); // dId -> { count: number, ultimoLogMs: number }
+
 // Tabela MIME para o servidor de arquivos estáticos
 const TIPOS_MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -624,9 +627,30 @@ function tratarMensagemWebSocket(ws, msg, dispositivo, req) {
     const dId = msg.dispositivoId || dispositivo.id;
     for (const [outroWs, outroDisp] of conexoesAtivas.entries()) {
       if (outroWs !== ws && outroDisp.id === dId) {
-        console.log(`[WS] Substituindo socket antigo do aparelho ${outroDisp.nome} (${dId})`);
+        const socketAberto = outroWs.readyState === WebSocket.OPEN || outroWs.readyState === WebSocket.CONNECTING;
+        if (socketAberto) {
+          const agoraLog = Date.now();
+          const infoLog = rateLimitSubstituicaoLog.get(dId) || { count: 0, ultimoLogMs: 0 };
+          infoLog.count++;
+
+          if (agoraLog - infoLog.ultimoLogMs >= 3000) {
+            if (infoLog.count > 1) {
+              console.log(`[WS] Substituindo socket antigo do aparelho ${outroDisp.nome} (${dId}) (substituído ${infoLog.count} vezes)`);
+            } else {
+              console.log(`[WS] Substituindo socket antigo do aparelho ${outroDisp.nome} (${dId})`);
+            }
+            infoLog.ultimoLogMs = agoraLog;
+            infoLog.count = 0;
+          }
+          rateLimitSubstituicaoLog.set(dId, infoLog);
+
+          try {
+            outroWs.close(4001, 'substituído');
+          } catch (e) {
+            outroWs.terminate();
+          }
+        }
         conexoesAtivas.delete(outroWs);
-        outroWs.terminate();
       }
     }
 

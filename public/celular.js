@@ -9,6 +9,9 @@ import { GerenciadorConexao } from "./conexao.js";
 import { AnimadorFila } from "./animacao.js";
 import { formatarDuracao } from "../shared/metricas.js";
 
+// Encadeamento automático Fila 2 -> Fila 3 quando ambas estão ativas
+export const ENCADEAR_FILA3 = true;
+
 // Sintetizador Web Audio para cliques e bipes táteis sem dependências externas
 const AudioClick = {
     ctx: null,
@@ -386,20 +389,39 @@ const CelularApp = {
             `;
                 }
             } else if (fNum === 3) {
-                // Fila 3: SAIU DAS MESAS e PASSOU NA SAÍDA
-                html += `
-            <button class="big-btn chegada" onclick="CelularApp.registrarChegada(3)">
-                <span class="big-btn-title">SAIU DAS MESAS</span>
-                <span class="big-btn-subtitle">+1 na Fila 3</span>
-                <span class="big-btn-counter">Total: ${fObj.contadores.chegadas}</span>
-            </button>
+                // Fila 3:
+                // Se Fila 2 estiver ativa e ENCADEAR_FILA3 for true, a entrada é gerada automaticamente pela chegada às mesas (Fila 2)
+                const fila2Ativa =
+                    filasAtivas.includes(2) &&
+                    this.estado?.filas?.[2]?.ativa !== false;
 
-            <button class="big-btn atendimento" onclick="CelularApp.registrarAtendimento(3)" ${temGente ? "" : "disabled"}>
+                if (ENCADEAR_FILA3 && fila2Ativa) {
+                    html += `
+                <div style="grid-column: 1 / -1; background:rgba(236,72,153,0.1); border:1px solid #ec4899; padding:6px 10px; border-radius:8px; font-size:0.78rem; color:#db2777; margin-bottom:6px; text-align:center;">
+                ℹ️ Entradas geradas automaticamente pela chegada às mesas (Fila 2).
+                </div>
+                <button class="big-btn atendimento" style="grid-column: 1 / -1;" onclick="CelularApp.registrarAtendimento(3)" ${temGente ? "" : "disabled"}>
                 <span class="big-btn-title">PASSOU NA SAÍDA</span>
                 <span class="big-btn-subtitle">${temGente ? `próxima: Pessoa ${cabecaPessoa}` : "Fila Vazia"}</span>
                 <span class="big-btn-counter">Total: ${fObj.contadores.atendidas}</span>
-            </button>
+                </button>
             `;
+                } else {
+                    // Fila 2 inativa ou sem encadeamento: operador registra ambas as pontas
+                    html += `
+                <button class="big-btn chegada" onclick="CelularApp.registrarChegada(3)">
+                <span class="big-btn-title">SAIU DAS MESAS</span>
+                <span class="big-btn-subtitle">+1 na Fila 3</span>
+                <span class="big-btn-counter">Total: ${fObj.contadores.chegadas}</span>
+                </button>
+
+                <button class="big-btn atendimento" onclick="CelularApp.registrarAtendimento(3)" ${temGente ? "" : "disabled"}>
+                <span class="big-btn-title">PASSOU NA SAÍDA</span>
+                <span class="big-btn-subtitle">${temGente ? `próxima: Pessoa ${cabecaPessoa}` : "Fila Vazia"}</span>
+                <span class="big-btn-counter">Total: ${fObj.contadores.atendidas}</span>
+                </button>
+            `;
+                }
             }
 
             html += `</div>`;

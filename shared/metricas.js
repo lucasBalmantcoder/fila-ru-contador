@@ -739,6 +739,7 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
 
   // Encadeamento Fila 1 -> Fila 2: tempo total da chegada até as mesas
   let tempoChegadaAteMesas = null;
+  let transitoMesas = null;
   if (filasAtivas.includes(1) && filasAtivas.includes(2) && metricasPorFila[1] && metricasPorFila[2] && !metricasPorFila[1].semDados && !metricasPorFila[2].semDados) {
     const pessoasFila1Map = new Map(todasPessoas.filter(p => (p.fila || 1) === 1).map(p => [p.pessoa, p]));
     const pessoasFila2Atendidas = todasPessoas.filter(p => (p.fila || 1) === 2 && p.status === 'atendida' && p.atendimentoMs !== null && !p.ajuste);
@@ -752,6 +753,59 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
       }
     }
     tempoChegadaAteMesas = calcularEstatisticas(temposChegadaAteMesasSeg);
+    if (tempoChegadaAteMesas && tempoChegadaAteMesas.qtd > 0) {
+      transitoMesas = {
+        count: tempoChegadaAteMesas.qtd,
+        mediaSeg: tempoChegadaAteMesas.media,
+        medianaSeg: tempoChegadaAteMesas.mediana,
+        p90Seg: tempoChegadaAteMesas.p90
+      };
+    }
+  }
+
+  // Encadeamento Fila 2 -> Fila 3: tempo da chegada na F2 até a saída na F3
+  let tempoMesasAteSaida = null;
+  if (filasAtivas.includes(2) && filasAtivas.includes(3) && metricasPorFila[2] && metricasPorFila[3] && !metricasPorFila[2].semDados && !metricasPorFila[3].semDados) {
+    const pessoasFila2Map = new Map(todasPessoas.filter(p => (p.fila || 1) === 2).map(p => [p.pessoa, p]));
+    const pessoasFila3Atendidas = todasPessoas.filter(p => (p.fila || 1) === 3 && p.status === 'atendida' && p.atendimentoMs !== null && !p.ajuste);
+
+    const temposMesasAteSaidaSeg = [];
+    for (const p3 of pessoasFila3Atendidas) {
+      const p2 = pessoasFila2Map.get(p3.pessoa);
+      if (p2 && p2.chegadaMs && !p2.ajuste) {
+        const deltaSeg = Math.max(0, p3.atendimentoMs - p2.chegadaMs) / 1000;
+        temposMesasAteSaidaSeg.push(deltaSeg);
+      }
+    }
+    tempoMesasAteSaida = calcularEstatisticas(temposMesasAteSaidaSeg);
+  }
+
+  // Encadeamento Completo Fila 1 -> Fila 2 -> Fila 3: tempo total da entrada no RU até a saída
+  let tempoTotalF1F2F3 = null;
+  let transitoSaida = null;
+  if (filasAtivas.includes(1) && filasAtivas.includes(2) && filasAtivas.includes(3) &&
+      metricasPorFila[1] && metricasPorFila[2] && metricasPorFila[3] &&
+      !metricasPorFila[1].semDados && !metricasPorFila[2].semDados && !metricasPorFila[3].semDados) {
+    const pessoasFila1Map = new Map(todasPessoas.filter(p => (p.fila || 1) === 1).map(p => [p.pessoa, p]));
+    const pessoasFila3Atendidas = todasPessoas.filter(p => (p.fila || 1) === 3 && p.status === 'atendida' && p.atendimentoMs !== null && !p.ajuste);
+
+    const temposTotalF1F2F3Seg = [];
+    for (const p3 of pessoasFila3Atendidas) {
+      const p1 = pessoasFila1Map.get(p3.pessoa);
+      if (p1 && p1.chegadaMs && !p1.ajuste) {
+        const deltaSeg = Math.max(0, p3.atendimentoMs - p1.chegadaMs) / 1000;
+        temposTotalF1F2F3Seg.push(deltaSeg);
+      }
+    }
+    tempoTotalF1F2F3 = calcularEstatisticas(temposTotalF1F2F3Seg);
+    if (tempoTotalF1F2F3 && tempoTotalF1F2F3.qtd > 0) {
+      transitoSaida = {
+        count: tempoTotalF1F2F3.qtd,
+        mediaSeg: tempoTotalF1F2F3.media,
+        medianaSeg: tempoTotalF1F2F3.mediana,
+        p90Seg: tempoTotalF1F2F3.p90
+      };
+    }
   }
 
   // Qualidade dos dados
@@ -773,6 +827,10 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
     filasAtivas,
     filas: metricasPorFila,
     tempoChegadaAteMesas,
+    transitoMesas,
+    tempoMesasAteSaida,
+    tempoTotalF1F2F3,
+    transitoSaida,
     // Propriedades raiz compatíveis com Fila 1:
     n_chegadas: mF1.n_chegadas ?? 0,
     n_atendimentos: mF1.n_atendimentos ?? 0,

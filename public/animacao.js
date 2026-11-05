@@ -491,19 +491,22 @@ export class AnimadorFila {
                     setTimeout(() => no.remove(), 600);
                 }
             } else if (op.op === "transferir") {
-                const noF1 = this.camadaPessoas.querySelector(
+                const fOrig = op.fila || op.deFila || 1;
+                const noOrig = this.camadaPessoas.querySelector(
+                    `[data-chave="f${fOrig}_p${op.pessoa}"]`,
+                ) || this.camadaPessoas.querySelector(
                     `[data-chave="f1_p${op.pessoa}"]`,
                 );
-                if (noF1) {
-                    const posCatraca = this.obterPosicaoDestino(1);
-                    noF1.style.transition =
+                if (noOrig) {
+                    const posDest = this.obterPosicaoDestino(fOrig);
+                    noOrig.style.transition =
                         "transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease";
-                    noF1.setAttribute(
+                    noOrig.setAttribute(
                         "transform",
-                        `translate(${posCatraca.x}, ${posCatraca.y})`,
+                        `translate(${posDest.x}, ${posDest.y})`,
                     );
-                    noF1.style.opacity = "0";
-                    setTimeout(() => noF1.remove(), 500);
+                    noOrig.style.opacity = "0";
+                    setTimeout(() => noOrig.remove(), 500);
                 }
             } else if (op.op === "anular") {
                 const fNum = op.fila || 1;
