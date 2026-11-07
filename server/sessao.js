@@ -1083,4 +1083,44 @@ export class GerenciadorSessoes {
     }
     return null;
   }
+
+  /**
+   * Atualiza os metadados descritivos da sessão (nome, local, observações).
+   * Não permite alterar dados de eventos, métricas ou configurações operacionais.
+   */
+  atualizarMetadadosSessao(id, dados = {}) {
+    const dirPath = path.join(this.dirDados, id);
+    const metaPath = path.join(dirPath, 'metadados.json');
+    if (!fs.existsSync(metaPath)) {
+      throw new Error(`Sessão ${id} não encontrada.`);
+    }
+
+    const nome = String(dados.nome ?? dados.novoNome ?? '').trim();
+    const local = String(dados.local ?? '').trim();
+    if (!nome) {
+      throw new Error('O nome da observação é obrigatório.');
+    }
+    if (!local) {
+      throw new Error('O local / campus é obrigatório.');
+    }
+
+    const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
+    meta.nome = nome;
+    meta.local = local;
+    if (dados.observacoes !== undefined) {
+      meta.observacoes = String(dados.observacoes || '').trim();
+    }
+
+    fs.writeFileSync(metaPath, JSON.stringify(meta, null, 2), 'utf-8');
+
+    if (this.sessaoAtiva && this.sessaoAtiva.meta.id === id) {
+      this.sessaoAtiva.meta.nome = nome;
+      this.sessaoAtiva.meta.local = local;
+      if (dados.observacoes !== undefined) {
+        this.sessaoAtiva.meta.observacoes = meta.observacoes;
+      }
+    }
+
+    return meta;
+  }
 }

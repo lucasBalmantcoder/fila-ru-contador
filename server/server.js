@@ -323,6 +323,24 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
       return;
     }
 
+    // POST /api/sessoes/:id/editar ou PUT/PATCH /api/sessoes/:id (editar metadados)
+    if ((subAcao === 'editar' && req.method === 'POST') || (!subAcao && (req.method === 'PUT' || req.method === 'PATCH'))) {
+      let body = '';
+      req.on('data', chunk => body += chunk);
+      req.on('end', () => {
+        try {
+          const dados = JSON.parse(body || '{}');
+          const meta = gerenciadorSessoes.atualizarMetadadosSessao(sessaoId, dados);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: true, meta }));
+        } catch (err) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ sucesso: false, erro: err.message }));
+        }
+      });
+      return;
+    }
+
     // Obter dados completos da sessão
     const dadosSessao = gerenciadorSessoes.obterSessaoCompleta(sessaoId);
     if (!dadosSessao) {

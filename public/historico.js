@@ -124,6 +124,7 @@ const HistoricoApp = {
       const resp = await fetch('/api/sessoes');
       if (!resp.ok) throw new Error(`Falha ao obter lista (status ${resp.status})`);
       let sessoes = await resp.json();
+      this.sessoesLista = sessoes;
 
       if (!mostrarTestes) {
         sessoes = sessoes.filter(s => !s.teste);
@@ -163,7 +164,7 @@ const HistoricoApp = {
           </div>
           <div class="btn-group" onclick="event.stopPropagation()">
             <button class="btn btn-primary" style="padding:4px 10px; font-size:0.8rem;" onclick="HistoricoApp.abrirSessao('${s.id}')">Abrir Relatório</button>
-            <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.8rem;" onclick="HistoricoApp.renomearSessao('${s.id}')">✏️</button>
+            <button class="btn btn-secondary" style="padding:4px 8px; font-size:0.8rem;" onclick="HistoricoApp.abrirModalEditarSessao('${s.id}')" title="Editar informações da sessão">✏️</button>
             <button class="btn btn-danger" style="padding:4px 8px; font-size:0.8rem;" onclick="HistoricoApp.excluirSessao('${s.id}')">🗑</button>
           </div>
         `;
@@ -1263,16 +1264,143 @@ ${filasTexto}
     });
   },
 
-  async renomearSessao(id) {
-    const novoNome = prompt('Digite o novo nome para esta sessão:');
-    if (!novoNome || !novoNome.trim()) return;
+  async abrirModalEditarSessao(id) {
+    let sessao = (this.sessoesLista || []).find(s => s.id === id);
+    if (!sessao && this.sessaoAtual && this.sessaoAtual.id === id) {
+      sessao = this.sessaoAtual;
+    }
+    if (!sessao) {
+      try {
+        const resp = await fetch(`/api/sessoes/${id}`);
+        if (resp.ok) {
+          const dados = await resp.json();
+          sessao = dados.meta || {};
+        }
+      } catch (e) {
+        console.warn('Erro ao carregar sessão para edição:', e);
+      }
+    }
 
-    await fetch(`/api/sessoes/${id}/renomear`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ novoNome: novoNome.trim() })
-    });
-    this.carregarListaSessoes();
+    if (!sessao) {
+      alert('Não foi possível carregar as informações da sessão para edição.');
+      return;
+    }
+
+    const modal = document.getElementById('modal-editar-sessao');
+    const inputId = document.getElementById('edit-sessao-id');
+    const inputNome = document.getElementById('edit-sessao-nome');
+    const inputLocal = document.getElementById('edit-sessao-local');
+    const inputObs = document.getElementById('edit-sessao-obs');
+    const feedbackErro = document.getElementById('edit-sessao-feedback-erro');
+    const feedbackSucesso = document.getElementById('edit-sessao-feedback-sucesso');
+    const btnSalvar = document.getElementById('btn-salvar-edicao');
+
+    if (inputId) inputId.value = sessao.id;
+    if (inputNome) inputNome.value = sessao.nome || '';
+    if (inputLocal) inputLocal.value = sessao.local || '';
+    if (inputObs) inputObs.value = sessao.observacoes || '';
+    if (feedbackErro) {
+      feedbackErro.style.display = 'none';
+      feedbackErro.textContent = '';
+    }
+    if (feedbackSucesso) {
+      feedbackSucesso.style.display = 'none';
+      feedbackSucesso.textContent = '';
+    }
+    if (btnSalvar) btnSalvar.disabled = false;
+
+    if (modal) {
+      modal.classList.add('open');
+      setTimeout(() => {
+        if (inputNome) inputNome.focus();
+      }, 50);
+    }
+  },
+
+  async salvarEdicaoSessao() {
+    const inputId = document.getElementById('edit-sessao-id');
+    const inputNome = document.getElementById('edit-sessao-nome');
+    const inputLocal = document.getElementById('edit-sessao-local');
+    const inputObs = document.getElementById('edit-sessao-obs');
+    const feedbackErro = document.getElementById('edit-sessao-feedback-erro');
+    const feedbackSucesso = document.getElementById('edit-sessao-feedback-sucesso');
+    const btnSalvar = document.getElementById('btn-salvar-edicao');
+
+    const id = inputId ? inputId.value : null;
+    const nome = inputNome ? inputNome.value.trim() : '';
+    const local = inputLocal ? inputLocal.value.trim() : '';
+    const observacoes = inputObs ? inputObs.value.trim() : '';
+
+    if (!id) return;
+
+    if (!nome) {
+      if (feedbackErro) {
+        feedbackErro.textContent = 'O nome da observação é obrigatório.';
+        feedbackErro.style.display = 'block';
+      }
+      return;
+    }
+
+    if (!local) {
+      if (feedbackErro) {
+        feedbackErro.textContent = 'O local / campus é obrigatório.';
+        feedbackErro.style.display = 'block';
+      }
+      return;
+    }
+
+    if (btnSalvar) btnSalvar.disabled = true;
+    if (feedbackErro) feedbackErro.style.display = 'none';
+    if (feedbackSucesso) feedbackSucesso.style.display = 'none';
+
+    try {
+      const resp = await fetch(`/api/sessoes/${id}/editar`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ nome, local, observacoes })
+      });
+
+      const res = await resp.json();
+      if (!resp.ok || !res.sucesso) {
+        throw new Error(res.erro || `Erro HTTP ${resp.status}`);
+      }
+
+      if (feedbackSucesso) {
+        feedbackSucesso.textContent = 'Informações atualizadas com sucesso!';
+        feedbackSucesso.style.display = 'block';
+      }
+
+      // Se a sessão editada for a sessão atualmente visualizada no relatório, atualiza o cabeçalho
+      if (this.sessaoAtual && this.sessaoAtual.id === id) {
+        this.sessaoAtual.nome = nome;
+        this.sessaoAtual.local = local;
+        this.sessaoAtual.observacoes = observacoes;
+        if (this.dadosCompletos?.meta) {
+          this.dadosCompletos.meta.nome = nome;
+          this.dadosCompletos.meta.local = local;
+          this.dadosCompletos.meta.observacoes = observacoes;
+        }
+        this.preencherCabecalhoSessao();
+      }
+
+      // Atualiza a lista na interface sem recarregar a página
+      await this.carregarListaSessoes();
+
+      setTimeout(() => {
+        this.fecharModais();
+      }, 600);
+    } catch (err) {
+      if (feedbackErro) {
+        feedbackErro.textContent = err.message || 'Erro ao salvar alterações da sessão.';
+        feedbackErro.style.display = 'block';
+      }
+    } finally {
+      if (btnSalvar) btnSalvar.disabled = false;
+    }
+  },
+
+  async renomearSessao(id) {
+    this.abrirModalEditarSessao(id);
   },
 
   async excluirSessao(id) {
