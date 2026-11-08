@@ -673,8 +673,23 @@ tr:hover td {
   border-radius: var(--radius);
   padding: 14px;
   position: relative;
-  height: 300px;
   width: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.chart-wrapper {
+  position: relative;
+  width: 100%;
+  height: 320px;
+  min-height: 250px;
+  flex: 1 1 auto;
+}
+
+@media (max-width: 640px) {
+  .chart-wrapper {
+    height: 270px;
+  }
 }
 
 /* Estilos de Impressão */

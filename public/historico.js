@@ -480,7 +480,10 @@ const HistoricoApp = {
 
     const toggleSection = (id, show) => {
       const el = document.getElementById(id);
-      if (el && el.parentElement) el.parentElement.style.display = show ? 'block' : 'none';
+      if (el) {
+        const container = el.closest('.chart-container') || el.closest('.card') || el.parentElement;
+        if (container) container.style.display = show ? '' : 'none';
+      }
     };
 
     if (mFila.semDados) {
@@ -1018,9 +1021,32 @@ const HistoricoApp = {
       options: {
         responsive: true,
         maintainAspectRatio: false,
+        layout: {
+          padding: { top: 8, right: 16, bottom: 8, left: 8 }
+        },
+        plugins: {
+          legend: {
+            display: true,
+            position: 'top',
+            labels: { color: corTexto, font: { weight: '600' }, boxWidth: 14 }
+          },
+          tooltip: {
+            mode: 'index',
+            intersect: false
+          }
+        },
         scales: {
-          x: { ticks: { color: corTexto, maxTicksLimit: 12 }, grid: { color: corGrid } },
-          y: { ticks: { color: corTexto }, grid: { color: corGrid } }
+          x: {
+            title: { display: true, text: 'Tempo decorrido (minutos)', color: corTexto, font: { size: 11, weight: '600' } },
+            ticks: { color: corTexto, maxTicksLimit: 14, autoSkip: true, maxRotation: 45, minRotation: 0 },
+            grid: { color: corGrid }
+          },
+          y: {
+            beginAtZero: true,
+            title: { display: true, text: 'Pessoas na fila', color: corTexto, font: { size: 11, weight: '600' } },
+            ticks: { color: corTexto, precision: 0, padding: 6 },
+            grid: { color: corGrid }
+          }
         }
       }
     });
@@ -1070,9 +1096,32 @@ const HistoricoApp = {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: {
+            padding: { top: 8, right: 16, bottom: 8, left: 8 }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: { color: corTexto, font: { weight: '600' }, boxWidth: 14 }
+            },
+            tooltip: {
+              mode: 'index',
+              intersect: false
+            }
+          },
           scales: {
-            x: { ticks: { color: corTexto, maxTicksLimit: 12 }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
+            x: {
+              title: { display: true, text: 'Tempo decorrido (minutos)', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, maxTicksLimit: 14, autoSkip: true, maxRotation: 45, minRotation: 0 },
+              grid: { color: corGrid }
+            },
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Pessoas (total acumulado)', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, precision: 0, padding: 6 },
+              grid: { color: corGrid }
+            }
           }
         }
       });
@@ -1093,9 +1142,32 @@ const HistoricoApp = {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: {
+            padding: { top: 8, right: 16, bottom: 8, left: 8 }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: { color: corTexto, font: { weight: '600' }, boxWidth: 14 }
+            },
+            tooltip: {
+              mode: 'index',
+              intersect: false
+            }
+          },
           scales: {
-            x: { ticks: { color: corTexto }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
+            x: {
+              title: { display: true, text: 'Intervalos de tempo (blocos)', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, autoSkip: true, maxRotation: 45, minRotation: 0 },
+              grid: { color: corGrid }
+            },
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Pessoas no bloco', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, precision: 0, padding: 6 },
+              grid: { color: corGrid }
+            }
           }
         }
       });
@@ -1132,9 +1204,32 @@ const HistoricoApp = {
         options: {
           responsive: true,
           maintainAspectRatio: false,
+          layout: {
+            padding: { top: 8, right: 16, bottom: 8, left: 8 }
+          },
+          plugins: {
+            legend: {
+              display: true,
+              position: 'top',
+              labels: { color: corTexto, font: { weight: '600' }, boxWidth: 14 }
+            },
+            tooltip: {
+              mode: 'index',
+              intersect: false
+            }
+          },
           scales: {
-            x: { ticks: { color: corTexto }, grid: { color: corGrid } },
-            y: { ticks: { color: corTexto }, grid: { color: corGrid } }
+            x: {
+              title: { display: true, text: 'Faixa de tempo de espera (segundos)', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, autoSkip: true, maxRotation: 45, minRotation: 0 },
+              grid: { color: corGrid }
+            },
+            y: {
+              beginAtZero: true,
+              title: { display: true, text: 'Quantidade de pessoas', color: corTexto, font: { size: 11, weight: '600' } },
+              ticks: { color: corTexto, precision: 0, padding: 6 },
+              grid: { color: corGrid }
+            }
           }
         }
       });

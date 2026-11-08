@@ -292,37 +292,13 @@
               </div>
             </div>
           </div>
-          <!-- Card: Tempo Total até a Saída (F1 + F2 + F3) -->
-          <div class="card" id="card-transito-saida" style="display:none;">
-            <div class="card-title">
-              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
-              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
-              <div class="hud-stat">
-                <span class="label">Pessoas que Saíram do Restaurante</span>
-                <span class="value" id="ts-count">0</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Tempo Médio até a Saída</span>
-                <span class="value" id="ts-media">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Mediana até a Saída</span>
-                <span class="value" id="ts-mediana">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">P90 até a Saída</span>
-                <span class="value" id="ts-p90">00:00</span>
-              </div>
-            </div>
-          </div>
-
 
           <!-- Gráfico Comparativo de Filas no Tempo -->
-          <div class="chart-container" style="height:320px;">
+          <div class="chart-container">
             <div class="card-title"><span>Comprimento das Filas ao Longo do Tempo</span></div>
-            <canvas id="chart-filas-comparativo"></canvas>
+            <div class="chart-wrapper">
+              <canvas id="chart-filas-comparativo"></canvas>
+            </div>
           </div>
         </div>
 
@@ -385,32 +361,6 @@
             </div>
           </div>
 
-          <!-- Card: Tempo Total até a Saída (F1 + F2 + F3) -->
-          <div class="card" id="card-transito-saida" style="display:none;">
-            <div class="card-title">
-              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
-              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
-              <div class="hud-stat">
-                <span class="label">Pessoas que Saíram do Restaurante</span>
-                <span class="value" id="ts-count">0</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Tempo Médio até a Saída</span>
-                <span class="value" id="ts-media">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Mediana até a Saída</span>
-                <span class="value" id="ts-mediana">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">P90 até a Saída</span>
-                <span class="value" id="ts-p90">00:00</span>
-              </div>
-            </div>
-          </div>
-
           <!-- Ociosidade Segmentada & Cobertura da Equipe -->
           <div class="form-grid">
             <div class="card">
@@ -424,32 +374,6 @@
             </div>
           </div>
 
-          <!-- Card: Tempo Total até a Saída (F1 + F2 + F3) -->
-          <div class="card" id="card-transito-saida" style="display:none;">
-            <div class="card-title">
-              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
-              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
-              <div class="hud-stat">
-                <span class="label">Pessoas que Saíram do Restaurante</span>
-                <span class="value" id="ts-count">0</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Tempo Médio até a Saída</span>
-                <span class="value" id="ts-media">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Mediana até a Saída</span>
-                <span class="value" id="ts-mediana">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">P90 até a Saída</span>
-                <span class="value" id="ts-p90">00:00</span>
-              </div>
-            </div>
-          </div>
-
           <!-- Lei de Little & Modelo Teórico Erlang C -->
           <div class="form-grid">
             <div class="card">
@@ -460,32 +384,6 @@
             <div class="card">
               <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
               <div id="box-teorico-info" style="font-size:0.85rem; line-height:1.6;"></div>
-            </div>
-          </div>
-
-          <!-- Card: Tempo Total até a Saída (F1 + F2 + F3) -->
-          <div class="card" id="card-transito-saida" style="display:none;">
-            <div class="card-title">
-              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
-              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
-              <div class="hud-stat">
-                <span class="label">Pessoas que Saíram do Restaurante</span>
-                <span class="value" id="ts-count">0</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Tempo Médio até a Saída</span>
-                <span class="value" id="ts-media">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Mediana até a Saída</span>
-                <span class="value" id="ts-mediana">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">P90 até a Saída</span>
-                <span class="value" id="ts-p90">00:00</span>
-              </div>
             </div>
           </div>
 
@@ -512,46 +410,26 @@
             </div>
           </div>
 
-          <!-- Card: Tempo Total até a Saída (F1 + F2 + F3) -->
-          <div class="card" id="card-transito-saida" style="display:none;">
-            <div class="card-title">
-              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
-              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
-            </div>
-            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
-              <div class="hud-stat">
-                <span class="label">Pessoas que Saíram do Restaurante</span>
-                <span class="value" id="ts-count">0</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Tempo Médio até a Saída</span>
-                <span class="value" id="ts-media">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">Mediana até a Saída</span>
-                <span class="value" id="ts-mediana">00:00</span>
-              </div>
-              <div class="hud-stat">
-                <span class="label">P90 até a Saída</span>
-                <span class="value" id="ts-p90">00:00</span>
-              </div>
-            </div>
-          </div>
-
           <!-- GRÁFICOS DA FILA -->
           <div class="chart-container">
             <div class="card-title"><span>Curvas Acumuladas de Chegadas e Passagens</span></div>
-            <canvas id="chart-acumulado"></canvas>
+            <div class="chart-wrapper">
+              <canvas id="chart-acumulado"></canvas>
+            </div>
           </div>
 
           <div class="chart-container">
             <div class="card-title"><span>Chegadas e Passagens por Bloco</span></div>
-            <canvas id="chart-blocos"></canvas>
+            <div class="chart-wrapper">
+              <canvas id="chart-blocos"></canvas>
+            </div>
           </div>
 
           <div class="chart-container">
             <div class="card-title"><span>Distribuição dos Tempos de Espera (Histograma)</span></div>
-            <canvas id="chart-histograma"></canvas>
+            <div class="chart-wrapper">
+              <canvas id="chart-histograma"></canvas>
+            </div>
           </div>
 
         </div>
