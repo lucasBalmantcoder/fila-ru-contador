@@ -95,6 +95,8 @@ export class AnimadorFila {
         this.svg.style.height = "100%";
         this.svg.style.display = "block";
         this.svg.style.pointerEvents = "none";
+        this.svg.style.backgroundColor = "#ffffff";
+        this.svg.style.borderRadius = "8px";
 
         const defs = document.createElementNS(
             "http://www.w3.org/2000/svg",
@@ -121,6 +123,16 @@ export class AnimadorFila {
             "http://www.w3.org/2000/svg",
             "g",
         );
+        const rectFundo = document.createElementNS(
+            "http://www.w3.org/2000/svg",
+            "rect",
+        );
+        rectFundo.setAttribute("x", geom.minX);
+        rectFundo.setAttribute("y", geom.minY);
+        rectFundo.setAttribute("width", geom.largura);
+        rectFundo.setAttribute("height", geom.altura);
+        rectFundo.setAttribute("fill", "#ffffff");
+        this.camadaFundo.appendChild(rectFundo);
         this.camadaSetas = document.createElementNS(
             "http://www.w3.org/2000/svg",
             "g",

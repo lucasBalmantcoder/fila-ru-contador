@@ -429,6 +429,23 @@ input:focus, select:focus, textarea:focus {
   display: flex;
   align-items: center;
   justify-content: center;
+  background-color: #ffffff;
+  border-radius: 8px;
+}
+
+[data-theme="dark"] .animacao-container {
+  background-color: #ffffff !important;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+}
+
+.fila-svg {
+  background-color: #ffffff;
+  border-radius: 8px;
+}
+
+[data-theme="dark"] .fila-svg {
+  background-color: #ffffff !important;
 }
 
 @media (min-width: 900px) {
@@ -444,9 +461,29 @@ input:focus, select:focus, textarea:focus {
 .animacao-container:fullscreen {
   max-height: 100vh;
   width: 100vw;
-  background: var(--bg-main);
+  background-color: #ffffff !important;
   padding: 16px;
   box-sizing: border-box;
+}
+
+.animacao-wrapper:fullscreen {
+  max-height: 100vh;
+  width: 100vw;
+  background-color: #ffffff !important;
+  padding: 16px;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+}
+
+.animacao-wrapper:fullscreen .card-title {
+  color: #0f172a !important;
+  border-bottom-color: #cbd5e1 !important;
+}
+
+.animacao-wrapper:fullscreen .animacao-container {
+  max-height: calc(100vh - 50px);
+  background-color: #ffffff !important;
 }
 
 /* Controles de Ação do Mapa (Ajustar e Tela Cheia) */
