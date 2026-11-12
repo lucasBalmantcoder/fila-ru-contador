@@ -6,6 +6,7 @@
 
 import { derivarEstado } from '../shared/estado.js';
 import { calcularMetricas, formatarDuracao, formatarHoraLocal, formatarNumero } from '../shared/metricas.js';
+import { TimelineAnimada } from '../shared/movimento.js';
 import { AnimadorFila } from './animacao.js';
 import { ControladorReplay } from './replay.js';
 import { GerenciadorConexao } from './conexao.js';
@@ -16,6 +17,7 @@ const HistoricoApp = {
   metricasAtuais: null,
   animador: null,
   controladorReplay: null,
+  timelineAnimada: null,
   conexaoAoVivo: null,
   graficos: {},
   abaAtual: 'geral',
@@ -335,10 +337,12 @@ const HistoricoApp = {
     if (aba === 'geral') {
       if (secGeral) secGeral.style.display = 'flex';
       if (secFila) secFila.style.display = 'none';
+      if (this.animador) this.animador.definirDestaqueFila(null);
       this.renderizarVisaoGeral();
     } else {
       if (secGeral) secGeral.style.display = 'none';
       if (secFila) secFila.style.display = 'flex';
+      if (this.animador) this.animador.definirDestaqueFila(Number(aba));
       this.renderizarDetalheFila(aba);
     }
   },
@@ -654,6 +658,7 @@ const HistoricoApp = {
   iniciarPlayerReplay(eventos) {
     if (!this.controladorReplay) return;
     if (!Array.isArray(eventos) || eventos.length === 0) {
+      this.timelineAnimada = null;
       this.controladorReplay.carregar([], this.sessaoAtual?.config);
       const durEl = document.getElementById('lbl-tempo-total-replay');
       if (durEl) durEl.textContent = '00:00';
@@ -662,6 +667,8 @@ const HistoricoApp = {
       return;
     }
 
+    // Inicializa a timeline animada determinística a partir de todos os eventos da sessão
+    this.timelineAnimada = new TimelineAnimada(eventos, this.sessaoAtual?.config);
     this.controladorReplay.carregar(eventos, this.sessaoAtual?.config);
 
     const durTotal = this.controladorReplay.duracaoTotalMs;
@@ -769,7 +776,13 @@ const HistoricoApp = {
     if (elVaz) elVaz.textContent = formatarNumero(estado.vazaoRecente || 0, 1);
 
     if (this.animador) {
-      this.animador.renderizarEstado(estado, false);
+      if (this.timelineAnimada) {
+        // Renderização contínua e suave no instante t exato (60 fps)
+        const dadosAnim = this.timelineAnimada.obterEstado(t, estado);
+        this.animador.renderizarBlocosAnimados(dadosAnim);
+      } else {
+        this.animador.renderizarEstado(estado, false);
+      }
     }
   },
 
@@ -821,6 +834,7 @@ const HistoricoApp = {
         onNovoEvento: (evento, estado) => {
           if (this.dadosCompletos && Array.isArray(this.dadosCompletos.eventos)) {
             this.dadosCompletos.eventos.push(evento);
+            this.timelineAnimada = new TimelineAnimada(this.dadosCompletos.eventos, this.sessaoAtual?.config);
             if (this.controladorReplay && !this.controladorReplay.tocando) {
               this.controladorReplay.carregar(this.dadosCompletos.eventos, this.sessaoAtual?.config);
             }

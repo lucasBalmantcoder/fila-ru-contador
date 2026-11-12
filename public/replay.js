@@ -1,8 +1,13 @@
 /**
  * public/replay.js
- * Controlador puro de reprodução do histórico (sem dependência do DOM).
+ * Controlador puro de reprodução do histórico (compatível com Node.js e Navegadores).
  * Permite reproduzir, pausar, reiniciar, alterar velocidade (1x, 5x, 10x, 60x),
- * realizar saltos no tempo, arrastar a barra de tempo e detectar o fim da sessão.
+ * realizar saltos no tempo, arrastar a barra de tempo (scrubbing) e detectar o fim da sessão.
+ * 
+ * Animação contínua e suave:
+ * Utiliza requestAnimationFrame para fluidez a 60 fps durante a reprodução, garantindo
+ * que o avanço do timestamp temporal seja rigorosamente determinístico e proporcional
+ * à velocidade selecionada (1x, 5x, 10x ou 60x), mantendo a precisão matemática das métricas.
  */
 
 import { derivarEstado } from '../shared/estado.js';
@@ -18,13 +23,14 @@ export class ControladorReplay {
 
     this.tocando = false;
     this.velocidade = opcoes.velocidadeInicial || 5; // 1, 5, 10 ou 60
-    this.timer = null;
-    this.intervaloMs = 100; // resolução do tick em milissegundos
+    this.rafHandle = null;
+    this.timerFallback = null;
+    this.ultimoTimestampReal = 0;
 
     this.arrastando = false;
     this.tocavaAntesDoArrasto = false;
 
-    // Callbacks
+    // Callbacks da aplicação
     this.onTick = opcoes.onTick || (() => {});
     this.onFim = opcoes.onFim || (() => {});
     this.onStatusChange = opcoes.onStatusChange || (() => {});
@@ -57,7 +63,7 @@ export class ControladorReplay {
   }
 
   /**
-   * Inicia a reprodução.
+   * Inicia a reprodução suave com requestAnimationFrame (60 fps).
    */
   reproduzir() {
     if (this.eventos.length === 0) return;
@@ -69,23 +75,63 @@ export class ControladorReplay {
     }
 
     this.tocando = true;
+    this.ultimoTimestampReal = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this.onStatusChange(this.tocando, this.velocidade);
 
-    this.timer = setInterval(() => {
-      this.tick();
-    }, this.intervaloMs);
+    // Loop de animação contínua (60 fps)
+    const loopPasso = () => {
+      if (!this.tocando) return;
+
+      const agora = (typeof performance !== 'undefined' ? performance.now() : Date.now());
+      // Limita dtReal a no máximo 100ms para evitar saltos gigantes caso a aba tenha ficado em segundo plano
+      const dtRealMs = Math.min(100, Math.max(0, agora - this.ultimoTimestampReal));
+      this.ultimoTimestampReal = agora;
+
+      // Avanço temporal da sessão proporcional à velocidade selecionada
+      const avancoSessaoMs = dtRealMs * this.velocidade;
+      this.tAtual += avancoSessaoMs;
+
+      // Detecção de fim de reprodução
+      if (this.tAtual >= this.tFim) {
+        this.tAtual = this.tFim;
+        this.notificarTick();
+        this.pausar();
+        this.onFim();
+        return;
+      }
+
+      this.notificarTick();
+
+      if (typeof requestAnimationFrame !== 'undefined') {
+        this.rafHandle = requestAnimationFrame(loopPasso);
+      } else {
+        this.timerFallback = setTimeout(loopPasso, 16);
+      }
+    };
+
+    if (typeof requestAnimationFrame !== 'undefined') {
+      this.rafHandle = requestAnimationFrame(loopPasso);
+    } else {
+      this.timerFallback = setTimeout(loopPasso, 16);
+    }
   }
 
   /**
-   * Pausa a reprodução.
+   * Pausa a reprodução mantendo o instante atual congelado.
    */
   pausar() {
-    if (!this.tocando && !this.timer) return;
+    if (!this.tocando && !this.rafHandle && !this.timerFallback) return;
     this.tocando = false;
-    if (this.timer) {
-      clearInterval(this.timer);
-      this.timer = null;
+
+    if (this.rafHandle && typeof cancelAnimationFrame !== 'undefined') {
+      cancelAnimationFrame(this.rafHandle);
+      this.rafHandle = null;
     }
+    if (this.timerFallback) {
+      clearTimeout(this.timerFallback);
+      this.timerFallback = null;
+    }
+
     this.onStatusChange(this.tocando, this.velocidade);
   }
 
@@ -110,19 +156,20 @@ export class ControladorReplay {
   }
 
   /**
-   * Altera a velocidade de reprodução (sem causar saltos no timestamp atual).
-   * @param {number} v - 1, 5, 10 ou 60.
+   * Altera a velocidade de reprodução (1x, 5x, 10x ou 60x) sem causar saltos na posição atual.
+   * @param {number} v - Fator de velocidade.
    */
   definirVelocidade(v) {
     const velNum = Number(v);
     if (![1, 5, 10, 60].includes(velNum)) return;
     this.velocidade = velNum;
+    this.ultimoTimestampReal = (typeof performance !== 'undefined' ? performance.now() : Date.now());
     this.onStatusChange(this.tocando, this.velocidade);
   }
 
   /**
-   * Salta diretamente para um timestamp t específico.
-   * @param {number} t - Timestamp epoch ms.
+   * Salta diretamente para um timestamp t específico (epoch ms).
+   * @param {number} t - Timestamp desejado.
    */
   saltarPara(t) {
     if (this.duracaoTotalMs === 0) return;
@@ -137,7 +184,7 @@ export class ControladorReplay {
 
   /**
    * Avança ou retrocede tempo em milissegundos.
-   * @param {number} ms - Ex: +5000 para +5s, -5000 para -5s.
+   * @param {number} ms - Offset relativo (+5000 para +5s, etc.).
    */
   avancar(ms) {
     this.saltarPara(this.tAtual + ms);
@@ -172,7 +219,7 @@ export class ControladorReplay {
   }
 
   /**
-   * Atualiza a posição durante o arraste na barra de tempo.
+   * Atualiza a posição durante o arraste na barra de tempo (scrubbing suave).
    * @param {number} fracao - De 0 a 1.
    */
   arrastarPara(fracao) {
@@ -198,28 +245,7 @@ export class ControladorReplay {
   }
 
   /**
-   * Passo discreto de tempo executado pelo timer.
-   */
-  tick() {
-    if (!this.tocando) return;
-
-    // Avanço proporcional à velocidade selecionada
-    const avanco = this.intervaloMs * this.velocidade;
-    this.tAtual += avanco;
-
-    if (this.tAtual >= this.tFim) {
-      this.tAtual = this.tFim;
-      this.notificarTick();
-      this.pausar();
-      this.onFim();
-      return;
-    }
-
-    this.notificarTick();
-  }
-
-  /**
-   * Dispara o callback onTick com estado derivado no instante tAtual.
+   * Dispara o callback onTick com o instante tAtual e o estado derivado naquele instante.
    */
   notificarTick() {
     const estado = derivarEstado(this.eventos, this.tAtual, this.configSessao);
@@ -235,4 +261,3 @@ export class ControladorReplay {
     this.eventos = [];
   }
 }
-

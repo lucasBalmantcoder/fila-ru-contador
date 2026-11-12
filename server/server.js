@@ -963,86 +963,114 @@ function transmitirListaAparelhos() {
   });
 }
 
+let simulacaoEmAndamento = false;
+
 /**
  * Gera eventos sintéticos de teste para ensaio de carga e animação.
  */
 async function executarSimulacaoTeste(ws, total = 60) {
-  if (!gerenciadorSessoes.sessaoAtiva) {
-    gerenciadorSessoes.iniciarSessao({
-      nome: 'Coleta de Teste Sintética',
-      local: 'RU - Simulação de Laboratório',
-      observacoes: 'Sessão gerada automaticamente para teste de carga e animação.',
-      filasAtivas: [1, 2, 3],
-      duracaoPrevistaMin: 60,
-      servidores: 1,
-      blocoMin: 5,
-      limiarPausaSeg: 60,
-      teste: true
-    }, { id: 'simulador', nome: 'Simulador' });
-
-    transmitirParaTodos({
-      tipo: 'sessao_iniciada',
-      sessao: gerenciadorSessoes.obterResumoSessaoAtiva(),
-      estado: gerenciadorSessoes.sessaoAtiva.estadoAtual
-    });
+  if (simulacaoEmAndamento) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ tipo: 'aviso', mensagem: 'Simulação de teste já em execução.' }));
+    }
+    return;
   }
+  simulacaoEmAndamento = true;
 
-  const autor = { id: 'simulador', nome: 'Robô de Teste' };
-  const filasAtivas = gerenciadorSessoes.sessaoAtiva.config.filasAtivas || [1];
+  try {
+    if (!gerenciadorSessoes.sessaoAtiva) {
+      gerenciadorSessoes.iniciarSessao({
+        nome: 'Coleta de Teste Sintética',
+        local: 'RU - Simulação de Laboratório',
+        observacoes: 'Sessão gerada automaticamente para teste de carga e animação.',
+        filasAtivas: [1, 2, 3],
+        duracaoPrevistaMin: 60,
+        servidores: 1,
+        blocoMin: 5,
+        limiarPausaSeg: 60,
+        teste: true
+      }, { id: 'simulador', nome: 'Simulador' });
 
-  for (let i = 0; i < total; i++) {
-    // Escolhe uma fila ativa
-    const filaEscolhida = filasAtivas[Math.floor(Math.random() * filasAtivas.length)];
-    const filaObj = gerenciadorSessoes.sessaoAtiva.estadoAtual.filas[filaEscolhida];
-    const filaVazia = !filaObj || filaObj.fila.length === 0;
-
-    const deveChegar = Math.random() < 0.6 || filaVazia;
-
-    if (deveChegar) {
-      // Se Fila 2 estiver encadeada com Fila 1, chegada na Fila 2 vem da Fila 1
-      if (filaEscolhida === 2 && filasAtivas.includes(1)) {
-        // Gera chegada na Fila 1
-        const res = gerenciadorSessoes.processarComando({
-          acao: 'chegada',
-          fila: 1,
-          clientEventId: `sim_ch1_${Date.now()}_${i}`
-        }, autor);
-        if (res.sucesso) {
-          transmitirParaTodos({ tipo: 'novo_evento', evento: res.evento, estado: res.estado, diff: res.diff });
-        }
-      } else {
-        const res = gerenciadorSessoes.processarComando({
-          acao: 'chegada',
-          fila: filaEscolhida,
-          clientEventId: `sim_ch_${filaEscolhida}_${Date.now()}_${i}`
-        }, autor);
-        if (res.sucesso) {
-          transmitirParaTodos({ tipo: 'novo_evento', evento: res.evento, estado: res.estado, diff: res.diff });
-        }
-      }
-    } else {
-      if (filaObj && filaObj.fila.length > 0) {
-        const cabeca = filaObj.fila[0];
-        const res = gerenciadorSessoes.processarComando({
-          acao: 'atendido',
-          fila: filaEscolhida,
-          pessoaEsperada: cabeca,
-          clientEventId: `sim_at_${filaEscolhida}_${Date.now()}_${i}`
-        }, autor);
-
-        if (res.sucesso) {
-          transmitirParaTodos({
-            tipo: 'novo_evento',
-            evento: res.evento,
-            eventoEncadeado: res.eventoEncadeado,
-            estado: res.estado,
-            diff: res.diff
-          });
-        }
-      }
+      transmitirParaTodos({
+        tipo: 'sessao_iniciada',
+        sessao: gerenciadorSessoes.obterResumoSessaoAtiva(),
+        estado: gerenciadorSessoes.sessaoAtiva.estadoAtual
+      });
     }
 
-    await new Promise(r => setTimeout(r, 120));
+    const autor = { id: 'simulador', nome: 'Robô de Teste' };
+    const filasAtivas = gerenciadorSessoes.sessaoAtiva.config.filasAtivas || [1];
+
+    for (let i = 0; i < total; i++) {
+      if (!gerenciadorSessoes.sessaoAtiva) break;
+
+      // Escolhe uma fila ativa
+      const filaEscolhida = filasAtivas[Math.floor(Math.random() * filasAtivas.length)];
+      const filaObj = gerenciadorSessoes.sessaoAtiva.estadoAtual.filas[filaEscolhida];
+      const filaVazia = !filaObj || filaObj.fila.length === 0;
+
+      const deveChegar = Math.random() < 0.6 || filaVazia;
+
+      if (deveChegar) {
+        // Se Fila 2 estiver encadeada com Fila 1, chegada na Fila 2 vem da Fila 1
+        if (filaEscolhida === 2 && filasAtivas.includes(1)) {
+          // Gera chegada na Fila 1
+          const res = gerenciadorSessoes.processarComando({
+            acao: 'chegada',
+            fila: 1,
+            clientEventId: `sim_ch1_${Date.now()}_${i}`
+          }, autor);
+          if (res.sucesso) {
+            transmitirParaTodos({
+              tipo: 'novo_evento',
+              evento: res.evento,
+              eventoEncadeado: res.eventoEncadeado,
+              estado: res.estado,
+              diff: res.diff
+            });
+          }
+        } else {
+          const res = gerenciadorSessoes.processarComando({
+            acao: 'chegada',
+            fila: filaEscolhida,
+            clientEventId: `sim_ch_${filaEscolhida}_${Date.now()}_${i}`
+          }, autor);
+          if (res.sucesso) {
+            transmitirParaTodos({
+              tipo: 'novo_evento',
+              evento: res.evento,
+              eventoEncadeado: res.eventoEncadeado,
+              estado: res.estado,
+              diff: res.diff
+            });
+          }
+        }
+      } else {
+        if (filaObj && filaObj.fila.length > 0) {
+          const cabeca = filaObj.fila[0];
+          const res = gerenciadorSessoes.processarComando({
+            acao: 'atendido',
+            fila: filaEscolhida,
+            pessoaEsperada: cabeca,
+            clientEventId: `sim_at_${filaEscolhida}_${Date.now()}_${i}`
+          }, autor);
+
+          if (res.sucesso) {
+            transmitirParaTodos({
+              tipo: 'novo_evento',
+              evento: res.evento,
+              eventoEncadeado: res.eventoEncadeado,
+              estado: res.estado,
+              diff: res.diff
+            });
+          }
+        }
+      }
+
+      await new Promise(r => setTimeout(r, 220));
+    }
+  } finally {
+    simulacaoEmAndamento = false;
   }
 }
 
