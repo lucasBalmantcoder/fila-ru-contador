@@ -563,7 +563,7 @@ assert(opTransf1 && (opTransf1.fila === 1 || opTransf1.deFila === 1), 'Diff cont
 // Salva estado antes de F2 atender
 const estAntesF2Mesas = gsMulti.sessaoAtiva.estadoAtual;
 const rMesasPipe = gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 1, clientEventId: 'pipe_f2_m1' }, disp1);
-assert(rMesasPipe.eventosGerados[1].fila === 3, 'Mesas F2 transfere para Fila 3');
+assert(rMesasPipe.eventosGerados && rMesasPipe.eventosGerados.length > 1 && rMesasPipe.eventosGerados[1].fila === 3, 'Mesas F2 transfere para Fila 3');
 
 // Diff de transferência F2 -> F3
 const diffF2F3 = diffEstado(estAntesF2Mesas, gsMulti.sessaoAtiva.estadoAtual);
@@ -596,6 +596,62 @@ const codigoSubstituicao = 4001;
 const motivoSubstituicao = 'substituído';
 assert(codigoSubstituicao === 4001, 'Código de encerramento por substituição é 4001');
 assert(motivoSubstituicao === 'substituído', 'Motivo de encerramento explícito é "substituído"');
+
+/* --------------------------------------------------------------------------
+   25. Teste: Estatística de Preenchimento das Mesas (4×9 = 36 mesas, 216 cadeiras)
+   -------------------------------------------------------------------------- */
+console.log('\n--- 25. Estatística de Preenchimento das Mesas (216 cadeiras) ---');
+if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
+gsMulti.iniciarSessao({ nome: 'Teste Mesas RU', filasAtivas: [1, 2, 3], teste: true });
+
+// Estado inicial vazio
+const estInicioMesas = gsMulti.sessaoAtiva.estadoAtual;
+assert(estInicioMesas.ocupacaoMesas.capacidadeTotal === 216, 'Capacidade total configurada em 216 cadeiras');
+assert(estInicioMesas.ocupacaoMesas.fileiras === 4, 'Salão modelado com 4 fileiras');
+assert(estInicioMesas.ocupacaoMesas.mesasPorFileira === 9, '9 mesas por fileira');
+assert(estInicioMesas.ocupacaoMesas.totalMesas === 36, 'Total de 36 mesas (4×9)');
+assert(estInicioMesas.ocupacaoMesas.cadeirasPorMesa === 6, '6 cadeiras por mesa');
+assert(estInicioMesas.ocupacaoMesas.ocupadas === 0, 'Inicialmente 0 cadeiras ocupadas');
+assert(estInicioMesas.ocupacaoMesas.livres === 216, 'Inicialmente 216 cadeiras livres');
+assert(estInicioMesas.ocupacaoMesas.percentual === 0, 'Percentual de ocupação inicial = 0%');
+assert(estInicioMesas.ocupacaoMesas.status === 'Tranquilo', 'Status inicial é "Tranquilo"');
+
+// Pessoa 1 e Pessoa 2 entram e chegam às mesas
+gsMulti.processarComando({ acao: 'chegada', fila: 1, clientEventId: 'mesas_c1' }, disp1);
+gsMulti.processarComando({ acao: 'atendido', fila: 1, pessoaEsperada: 1, clientEventId: 'mesas_cat1' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 1, clientEventId: 'mesas_m1' }, disp1);
+
+const estP1Mesa = gsMulti.sessaoAtiva.estadoAtual;
+assert(estP1Mesa.ocupacaoMesas.ocupadas === 1, 'Pessoa 1 sentou: 1 cadeira ocupada');
+assert(estP1Mesa.ocupacaoMesas.livres === 215, '215 cadeiras livres restantes');
+assert(estP1Mesa.ocupacaoMesas.mesasOcupadas === 1, '1 mesa em uso');
+
+gsMulti.processarComando({ acao: 'chegada', fila: 1, clientEventId: 'mesas_c2' }, disp1);
+gsMulti.processarComando({ acao: 'atendido', fila: 1, pessoaEsperada: 2, clientEventId: 'mesas_cat2' }, disp1);
+gsMulti.processarComando({ acao: 'saida', fila: 2, pessoaEsperada: 2, clientEventId: 'mesas_m2' }, disp1);
+
+const estP2Mesa = gsMulti.sessaoAtiva.estadoAtual;
+assert(estP2Mesa.ocupacaoMesas.ocupadas === 2, 'Pessoa 2 sentou: 2 cadeiras ocupadas');
+assert(estP2Mesa.ocupacaoMesas.livres === 214, '214 cadeiras livres');
+
+// Pessoa 1 termina a refeição e passa pela Saída (Fila 3) -> libera a cadeira
+gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 1, clientEventId: 'mesas_s1' }, disp2);
+
+const estP1Saiu = gsMulti.sessaoAtiva.estadoAtual;
+assert(estP1Saiu.ocupacaoMesas.ocupadas === 1, 'Pessoa 1 saiu pela F3: cadeira liberada (resta 1 ocupada)');
+assert(estP1Saiu.ocupacaoMesas.livres === 215, '215 cadeiras livres após saída');
+
+// Pessoa 2 também sai -> todas as cadeiras liberadas
+gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 2, clientEventId: 'mesas_s2' }, disp2);
+const estP2Saiu = gsMulti.sessaoAtiva.estadoAtual;
+assert(estP2Saiu.ocupacaoMesas.ocupadas === 0, 'Pessoa 2 saiu: salão 100% liberado');
+assert(estP2Saiu.ocupacaoMesas.livres === 216, 'Todas as 216 cadeiras livres');
+
+// Validação das métricas consolidadas das mesas
+const metMesas = calcularMetricas(gsMulti.sessaoAtiva.eventos, gsMulti.sessaoAtiva.config, Date.now());
+assert(metMesas.estatisticasMesas.capacidadeTotal === 216, 'Métricas reportam capacidade de 216 cadeiras');
+assert(metMesas.estatisticasMesas.picoOcupadas === 2, 'Pico de ocupação registrado = 2 cadeiras');
+assert(metMesas.estatisticasMesas.totalEventosEntrada === 2, 'Total de 2 entradas registradas nas mesas');
 
 if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
 

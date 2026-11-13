@@ -472,6 +472,31 @@ const HistoricoApp = {
       if (cardTransitoSaida) cardTransitoSaida.style.display = 'none';
     }
 
+    // Card de Ocupação do Salão e Mesas (216 cadeiras: 4×9 mesas)
+    const cardMesas = document.getElementById('card-ocupacao-mesas');
+    const em = this.metricasAtuais?.estatisticasMesas;
+    if (em && (em.totalEventosEntrada > 0 || em.picoOcupadas > 0)) {
+      if (cardMesas) cardMesas.style.display = 'block';
+      const picoEl = document.getElementById('mesas-pico-cadeiras');
+      const picoPercEl = document.getElementById('mesas-pico-perc');
+      const picoTempoEl = document.getElementById('mesas-pico-tempo');
+      const statusPicoEl = document.getElementById('mesas-status-pico');
+      const medEl = document.getElementById('mesas-media-cadeiras');
+      const medPercEl = document.getElementById('mesas-media-perc');
+      const livresEl = document.getElementById('mesas-livres-pico');
+
+      if (picoEl) picoEl.textContent = `${em.picoOcupadas} cad.`;
+      if (picoPercEl) picoPercEl.textContent = `${em.picoPercentual}% da capacidade`;
+      const decorridoPico = Math.max(0, (em.instantePicoMs || 0) - (this.metricasAtuais?.inicioMs || 0));
+      if (picoTempoEl) picoTempoEl.textContent = formatarDuracao(decorridoPico).substring(3);
+      if (statusPicoEl) statusPicoEl.textContent = `Status: ${em.statusPico || 'Tranquilo'}`;
+      if (medEl) medEl.textContent = `${formatarNumero(em.mediaOcupadas, 1)} cad.`;
+      if (medPercEl) medPercEl.textContent = `${formatarNumero(em.mediaPercentual, 1)}% em média`;
+      if (livresEl) livresEl.textContent = `${Math.max(0, em.capacidadeTotal - em.picoOcupadas)}`;
+    } else {
+      if (cardMesas) cardMesas.style.display = 'none';
+    }
+
 
     // Gráfico Comparativo das Filas no Tempo
     this.renderizarGraficoComparativoFilas();
@@ -767,6 +792,13 @@ const HistoricoApp = {
     const elF3 = document.getElementById('rep-f3');
     if (elF3) elF3.textContent = f3;
 
+    // Estatística sincronizada das 216 cadeiras nas Mesas
+    const ocup = estado.ocupacaoMesas || { ocupadas: 0, percentual: 0, capacidadeTotal: 216 };
+    const elMesas = document.getElementById('rep-mesas-cadeiras');
+    if (elMesas) elMesas.textContent = `${ocup.ocupadas}/${ocup.capacidadeTotal || 216}`;
+    const elMesasPerc = document.getElementById('rep-mesas-perc');
+    if (elMesasPerc) elMesasPerc.textContent = `${ocup.percentual}%`;
+
     let totalAtendidas = 0;
     if (estado.filas) {
       Object.values(estado.filas).forEach(f => { totalAtendidas += (f.contadores?.atendidas ?? f.atendidas ?? 0); });
@@ -783,7 +815,7 @@ const HistoricoApp = {
       if (this.timelineAnimada) {
         // Renderização contínua e suave no instante t exato (60 fps)
         const dadosAnim = this.timelineAnimada.obterEstado(t, estado);
-        this.animador.renderizarBlocosAnimados(dadosAnim);
+        this.animador.renderizarBlocosAnimados(dadosAnim, estado);
       } else {
         this.animador.renderizarEstado(estado, false);
       }

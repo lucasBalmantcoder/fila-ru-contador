@@ -366,6 +366,65 @@ const PainelApp = {
       `;
         });
 
+        // Card de Monitoramento das Mesas e Salão (4 fileiras de 9 mesas = 216 cadeiras)
+        const ocup = (this.estado && this.estado.ocupacaoMesas) || {
+            capacidadeTotal: 216,
+            fileiras: 4,
+            mesasPorFileira: 9,
+            totalMesas: 36,
+            cadeirasPorMesa: 6,
+            ocupadas: 0,
+            livres: 216,
+            percentual: 0,
+            mesasOcupadas: 0,
+            status: "Tranquilo",
+        };
+
+        let corStatus = "#16a34a"; // verde
+        if (ocup.status === "Lotado") corStatus = "#ef4444"; // vermelho
+        else if (ocup.status === "Quase Cheio") corStatus = "#ea580c"; // laranja
+        else if (ocup.status === "Moderado") corStatus = "#eab308"; // amarelo
+
+        html += `
+        <div class="fila-monitor-card" style="border-left: 4px solid #0284c7;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <strong style="color:#0284c7; font-size:0.95rem;">Salão & Mesas (4×9 = 36 mesas)</strong>
+            <span style="font-size:0.75rem; color:${corStatus}; font-weight:700;">● ${ocup.status}</span>
+          </div>
+
+          <div style="display:flex; justify-content:space-between; align-items:center; font-size:0.85rem; margin-top:2px;">
+            <span>Capacidade: <strong>216 cadeiras</strong> (6 cad./mesa)</span>
+            <span style="font-size:0.75rem; color:var(--text-muted); font-weight:600;">${ocup.percentual}% ocupado</span>
+          </div>
+
+          <!-- Barra visual de preenchimento das 216 cadeiras -->
+          <div style="width:100%; height:6px; background:#e2e8f0; border-radius:3px; overflow:hidden; margin: 5px 0 7px 0;">
+            <div style="width:${Math.min(100, Math.max(0, ocup.percentual))}%; height:100%; background:${corStatus}; transition: width 0.3s ease;"></div>
+          </div>
+
+          <div style="display:grid; grid-template-columns:1fr 1fr 1fr; gap:6px; background:var(--bg-subtle); padding:6px; border-radius:6px; text-align:center; margin-top:2px;">
+            <div>
+              <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Cadeiras Ocupadas</span>
+              <strong style="font-size:1.1rem; color:#0284c7;">${ocup.ocupadas}</strong>
+            </div>
+            <div>
+              <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Cadeiras Livres</span>
+              <strong style="font-size:1.1rem; color:var(--success);">${ocup.livres}</strong>
+            </div>
+            <div>
+              <span style="font-size:0.7rem; color:var(--text-muted); display:block;">Mesas em Uso</span>
+              <strong style="font-size:1.1rem;">~${ocup.mesasOcupadas}</strong>
+            </div>
+          </div>
+
+          <div style="margin-top:6px; display:flex; justify-content:space-between; align-items:center; gap:8px;">
+            <span style="font-size:0.72rem; color:var(--text-muted);">
+              Preenchidas na chegada às mesas • liberadas dinamicamente na saída
+            </span>
+          </div>
+        </div>
+        `;
+
         grid.innerHTML = html;
     },
 

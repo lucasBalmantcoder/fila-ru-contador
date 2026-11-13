@@ -240,6 +240,65 @@ export class AnimadorFila {
         rect.setAttribute("stroke-width", "2.5");
         g.appendChild(rect);
 
+        if (id === "mesas") {
+            const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            text.setAttribute("x", x + w / 2);
+            text.setAttribute("y", y + h / 2 - 14);
+            text.setAttribute("text-anchor", "middle");
+            text.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
+            text.setAttribute("font-size", "15");
+            text.setAttribute("font-weight", "bold");
+            text.setAttribute("fill", "#000000");
+            text.textContent = "Mesas";
+            g.appendChild(text);
+
+            const sub = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            sub.setAttribute("x", x + w / 2);
+            sub.setAttribute("y", y + h / 2 + 1);
+            sub.setAttribute("text-anchor", "middle");
+            sub.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
+            sub.setAttribute("font-size", "8.5");
+            sub.setAttribute("font-weight", "500");
+            sub.setAttribute("fill", "#64748b");
+            sub.textContent = "4×9 mesas (216 cad.)";
+            g.appendChild(sub);
+
+            const cont = document.createElementNS("http://www.w3.org/2000/svg", "text");
+            cont.setAttribute("id", `contador_caixa_${id}`);
+            cont.setAttribute("x", x + w / 2);
+            cont.setAttribute("y", y + h - 14);
+            cont.setAttribute("text-anchor", "middle");
+            cont.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
+            cont.setAttribute("font-size", "10");
+            cont.setAttribute("font-weight", "bold");
+            cont.setAttribute("fill", "#0284c7");
+            cont.textContent = "0/216 cadeiras";
+            g.appendChild(cont);
+
+            // Barra visual de preenchimento das 216 cadeiras
+            const bgBarra = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            bgBarra.setAttribute("x", x + 10);
+            bgBarra.setAttribute("y", y + h - 10);
+            bgBarra.setAttribute("width", w - 20);
+            bgBarra.setAttribute("height", 4.5);
+            bgBarra.setAttribute("rx", "2");
+            bgBarra.setAttribute("fill", "#e2e8f0");
+            g.appendChild(bgBarra);
+
+            const barraProg = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+            barraProg.setAttribute("id", "barra_progresso_mesas");
+            barraProg.setAttribute("x", x + 10);
+            barraProg.setAttribute("y", y + h - 10);
+            barraProg.setAttribute("width", "0");
+            barraProg.setAttribute("height", "4.5");
+            barraProg.setAttribute("rx", "2");
+            barraProg.setAttribute("fill", "#22c55e");
+            g.appendChild(barraProg);
+
+            this.camadaCaixas.appendChild(g);
+            return;
+        }
+
         if (Array.isArray(texto)) {
             const t1 = document.createElementNS("http://www.w3.org/2000/svg", "text");
             t1.setAttribute("x", x + w / 2);
@@ -325,9 +384,14 @@ export class AnimadorFila {
      * Renderiza o quadro da animação contínua calculada deterministicamente a partir de t.
      * Atualiza as coordenadas (x, y), dimensões, cores e estados dos blocos SVG instantaneamente.
      * @param {{ blocos: Array<Object>, badges: Array<Object>, t: number }} dadosAnimados
+     * @param {Object} [estado] - Estado derivado no instante t para sincronização das caixas
      */
-    renderizarBlocosAnimados(dadosAnimados) {
+    renderizarBlocosAnimados(dadosAnimados, estado) {
         if (!this.habilitada || !this.svg || !dadosAnimados) return;
+
+        if (estado) {
+            this.atualizarCaixas(estado);
+        }
 
         const listaBlocos = dadosAnimados.blocos || [];
         const badges = dadosAnimados.badges || [];
@@ -431,6 +495,52 @@ export class AnimadorFila {
         this.camadaBadges.innerHTML = "";
         for (const badge of badges) {
             this.desenharBadgeMaisN(badge.fila, badge.excedente, { x: badge.x, y: badge.y });
+        }
+    }
+
+    /**
+     * Atualiza os contadores físicos e barras visuais de status nas caixas do diagrama.
+     * Inclui a métrica de ocupação em tempo real das 216 cadeiras nas mesas.
+     * @param {Object} estado
+     */
+    atualizarCaixas(estado) {
+        if (!estado) return;
+
+        // Caixa Catraca
+        const contCatraca = document.getElementById("contador_caixa_catraca");
+        if (contCatraca) {
+            const totalPassaram = estado.filas?.[1]?.contadores?.atendidas ?? estado.contadores?.atendidas ?? 0;
+            contCatraca.textContent = `${totalPassaram} passaram`;
+        }
+
+        // Caixa Mesas (Estatística de preenchimento de 216 cadeiras)
+        const contMesas = document.getElementById("contador_caixa_mesas");
+        const ocup = estado.ocupacaoMesas || { ocupadas: 0, percentual: 0, capacidadeTotal: 216 };
+        if (contMesas) {
+            contMesas.textContent = `${ocup.ocupadas}/${ocup.capacidadeTotal || 216} cadeiras`;
+        }
+
+        const barraMesas = document.getElementById("barra_progresso_mesas");
+        if (barraMesas) {
+            const perc = Math.min(100, Math.max(0, ocup.percentual || 0));
+            const larguraMax = 79; // (w - 20) onde w=99
+            const largura = (perc / 100) * larguraMax;
+            barraMesas.setAttribute("width", String(largura));
+
+            let cor = "#22c55e"; // verde (< 70%)
+            if (perc >= 90) {
+                cor = "#ef4444"; // vermelho (lotado ou quase cheio)
+            } else if (perc >= 70) {
+                cor = "#eab308"; // amarelo (moderado/alerta)
+            }
+            barraMesas.setAttribute("fill", cor);
+        }
+
+        // Caixa Saída
+        const contSaida = document.getElementById("contador_caixa_saida");
+        if (contSaida) {
+            const totalSaida = estado.filas?.[3]?.contadores?.atendidas ?? 0;
+            contSaida.textContent = `${totalSaida} saíram`;
         }
     }
 
@@ -561,24 +671,8 @@ export class AnimadorFila {
 
         if (this.abaEmSegundoPlano || primeiraRenderizacao) animar = false;
 
-        // Contadores nas caixas
-        const contCatraca = document.getElementById("contador_caixa_catraca");
-        if (contCatraca) {
-            const totalPassaram = estado.filas?.[1]?.contadores?.atendidas ?? estado.contadores?.atendidas ?? 0;
-            contCatraca.textContent = `${totalPassaram} passaram`;
-        }
-
-        const contMesas = document.getElementById("contador_caixa_mesas");
-        if (contMesas) {
-            const totalMesas = estado.filas?.[2]?.contadores?.atendidas ?? 0;
-            contMesas.textContent = `${totalMesas} chegaram`;
-        }
-
-        const contSaida = document.getElementById("contador_caixa_saida");
-        if (contSaida) {
-            const totalSaida = estado.filas?.[3]?.contadores?.atendidas ?? 0;
-            contSaida.textContent = `${totalSaida} saíram`;
-        }
+        // Atualiza contadores nas caixas físicas e status das 216 cadeiras
+        this.atualizarCaixas(estado);
 
         const filasAtivas = estado.filasAtivas || [1];
 

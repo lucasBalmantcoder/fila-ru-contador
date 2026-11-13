@@ -816,6 +816,67 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
     eventosPorAparelho[nome] = (eventosPorAparelho[nome] || 0) + 1;
   }
 
+  // Estatísticas globais de preenchimento das Mesas (216 cadeiras em 4 fileiras de 9 mesas)
+  const CAPACIDADE_MESAS_TOTAL = 216;
+  const eventosMesas = eventos
+    .filter(e => (e.tipo === 'atendimento' && (e.fila === 2 || (!filasAtivas.includes(2) && e.fila === 1))) ||
+                 (e.tipo === 'atendimento' && e.fila === 3))
+    .sort((a, b) => a.t - b.t);
+
+  let picoMesas = 0;
+  let instantePicoMesas = inicioMs;
+  let contagemAtualMesas = 0;
+  let somaPonderadaMesas = 0;
+  let ultimoTMesas = inicioMs;
+
+  for (const ev of eventosMesas) {
+    const delta = Math.max(0, ev.t - ultimoTMesas);
+    somaPonderadaMesas += contagemAtualMesas * delta;
+    ultimoTMesas = ev.t;
+
+    if (ev.tipo === 'atendimento' && (ev.fila === 2 || (!filasAtivas.includes(2) && ev.fila === 1))) {
+      contagemAtualMesas++;
+      if (contagemAtualMesas > picoMesas) {
+        picoMesas = contagemAtualMesas;
+        instantePicoMesas = ev.t;
+      }
+    } else if (ev.tipo === 'atendimento' && ev.fila === 3) {
+      contagemAtualMesas = Math.max(0, contagemAtualMesas - 1);
+    }
+  }
+
+  const deltaFinal = Math.max(0, (fimMs || Date.now()) - ultimoTMesas);
+  somaPonderadaMesas += contagemAtualMesas * deltaFinal;
+  const duracaoTotalMesas = Math.max(1000, (fimMs || Date.now()) - inicioMs);
+  const mediaCadeirasOcupadas = Math.round((somaPonderadaMesas / duracaoTotalMesas) * 10) / 10;
+  const picoPercentual = Math.round((Math.min(CAPACIDADE_MESAS_TOTAL, picoMesas) / CAPACIDADE_MESAS_TOTAL) * 100);
+
+  let statusPico = 'Tranquilo';
+  if (picoPercentual >= 90) {
+    statusPico = 'Lotado';
+  } else if (picoPercentual >= 75) {
+    statusPico = 'Quase Cheio';
+  } else if (picoPercentual >= 50) {
+    statusPico = 'Moderado';
+  }
+
+  const totalEventosEntrada = eventosMesas.filter(e => e.tipo === 'atendimento' && (e.fila === 2 || (!filasAtivas.includes(2) && e.fila === 1))).length;
+
+  const estatisticasMesas = {
+    capacidadeTotal: CAPACIDADE_MESAS_TOTAL,
+    fileiras: 4,
+    mesasPorFileira: 9,
+    totalMesas: 36,
+    cadeirasPorMesa: 6,
+    picoOcupadas: Math.min(CAPACIDADE_MESAS_TOTAL, picoMesas),
+    instantePicoMs: instantePicoMesas,
+    picoPercentual,
+    mediaOcupadas: Math.min(CAPACIDADE_MESAS_TOTAL, mediaCadeirasOcupadas),
+    mediaPercentual: Math.round((Math.min(CAPACIDADE_MESAS_TOTAL, mediaCadeirasOcupadas) / CAPACIDADE_MESAS_TOTAL) * 100),
+    statusPico,
+    totalEventosEntrada
+  };
+
   // Compatibilidade com raiz: se Fila 1 foi calculada, suas métricas preenchem a raiz
   const mF1 = metricasPorFila[1] || {};
 
@@ -831,6 +892,7 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
     tempoMesasAteSaida,
     tempoTotalF1F2F3,
     transitoSaida,
+    estatisticasMesas,
     // Propriedades raiz compatíveis com Fila 1:
     n_chegadas: mF1.n_chegadas ?? 0,
     n_atendimentos: mF1.n_atendimentos ?? 0,

@@ -80,6 +80,8 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
   };
 
   const pessoas = new Map(); // chave: `${fila}_${pId}` -> objeto pessoa
+  const mapaEntradaMesas = new Map(); // pId -> tEntrada
+  const mapaSaidaMesas = new Map();   // pId -> tSaida
 
   // Filtrar eventos até o instante t
   const eventosValidos = eventos.filter(ev => ev.t <= t);
@@ -155,6 +157,15 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         filaObj.ultimoAtendimentoMs = ev.t;
         filaObj.historicoAtendimentos.push({ pessoa: pId, t: ev.t });
         filaObj.contadores.atendidas++;
+
+        // Rastreamento de ocupação das mesas:
+        // Entrada nas mesas ocorre ao sair da Fila 2 (ou Fila 1 se F2 inativa)
+        if (fNum === 2 || (fNum === 1 && !filasAtivasConfig.includes(2))) {
+          mapaEntradaMesas.set(pId, ev.t);
+        } else if (fNum === 3) {
+          // Saída das mesas / saída do restaurante
+          mapaSaidaMesas.set(pId, ev.t);
+        }
       }
     } else if (ev.tipo === 'anulacao') {
       filaObj.totalEventos++;
@@ -169,6 +180,11 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         if (ev.ajuste) p.ajuste = true;
         filaObj.contadores.anuladas++;
       }
+      if (fNum === 2 || (fNum === 1 && !filasAtivasConfig.includes(2))) {
+        mapaEntradaMesas.delete(pId);
+      } else if (fNum === 3) {
+        mapaSaidaMesas.set(pId, ev.t);
+      }
     } else if (ev.tipo === 'reversao') {
       filaObj.totalEventos++;
       const p = pessoas.get(chavePessoa);
@@ -178,6 +194,12 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         p.dispositivoAtendimento = null;
         p.esperaMs = null;
         p.intervaloAtendimentoMs = null;
+
+        if (fNum === 2 || (fNum === 1 && !filasAtivasConfig.includes(2))) {
+          mapaEntradaMesas.delete(pId);
+        } else if (fNum === 3) {
+          mapaSaidaMesas.delete(pId);
+        }
 
         // Reinsere a pessoa no início da fila
         if (!filaObj.fila.includes(pId)) {
@@ -265,6 +287,66 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
     fo.anuladas = fo.contadores.anuladas;
   }
 
+  // 3. Estatística de preenchimento das Mesas (4 fileiras de 9 mesas, 6 cadeiras cada = 216 cadeiras)
+  const CAPACIDADE_CADEIRAS = 216;
+  const TOTAL_MESAS = 36;
+  const FILEIRAS = 4;
+  const MESAS_POR_FILEIRA = 9;
+  const CADEIRAS_POR_MESA = 6;
+
+  const temFila3Ativa = filasAtivasConfig.includes(3) && !filasDesativadasMap.has(3);
+  const tempoRefeicaoMs = (cfg.tempoRefeicaoMin || 20) * 60 * 1000;
+  const pessoasSentadas = [];
+
+  for (const [pId, tEntrada] of mapaEntradaMesas.entries()) {
+    if (tEntrada <= tReferencia) {
+      const tSaida = mapaSaidaMesas.get(pId);
+      if (tSaida !== undefined) {
+        if (tSaida > tReferencia) {
+          pessoasSentadas.push(pId);
+        }
+      } else {
+        // Se Fila 3 estiver ativa, a liberação da cadeira depende da saída na Fila 3
+        if (temFila3Ativa) {
+          pessoasSentadas.push(pId);
+        } else {
+          // Se Fila 3 não for monitorada, a cadeira é liberada após o tempo estimado de permanência
+          if (tReferencia - tEntrada < tempoRefeicaoMs) {
+            pessoasSentadas.push(pId);
+          }
+        }
+      }
+    }
+  }
+
+  const cadeirasOcupadas = Math.min(CAPACIDADE_CADEIRAS, pessoasSentadas.length);
+  const cadeirasLivres = Math.max(0, CAPACIDADE_CADEIRAS - cadeirasOcupadas);
+  const taxaOcupacaoPerc = Math.round((cadeirasOcupadas / CAPACIDADE_CADEIRAS) * 100);
+  const mesasOcupadasEstimadas = Math.min(TOTAL_MESAS, Math.ceil(cadeirasOcupadas / CADEIRAS_POR_MESA));
+
+  let statusOcupacao = 'Tranquilo';
+  if (taxaOcupacaoPerc >= 90) {
+    statusOcupacao = 'Lotado';
+  } else if (taxaOcupacaoPerc >= 75) {
+    statusOcupacao = 'Quase Cheio';
+  } else if (taxaOcupacaoPerc >= 50) {
+    statusOcupacao = 'Moderado';
+  }
+
+  const ocupacaoMesas = {
+    capacidadeTotal: CAPACIDADE_CADEIRAS,
+    fileiras: FILEIRAS,
+    mesasPorFileira: MESAS_POR_FILEIRA,
+    totalMesas: TOTAL_MESAS,
+    cadeirasPorMesa: CADEIRAS_POR_MESA,
+    ocupadas: cadeirasOcupadas,
+    livres: cadeirasLivres,
+    percentual: taxaOcupacaoPerc,
+    mesasOcupadas: mesasOcupadasEstimadas,
+    status: statusOcupacao,
+    pessoasSentadas
+  };
+
   // Compatibilidade com raiz (Fila 1) para testes e interfaces legadas
   const f1 = filas[1];
   const pessoasArray = Array.from(pessoas.values());
@@ -275,6 +357,7 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
     filasDesativadas: filasDesativadasArray,
     filas,
     pessoas: pessoasArray,
+    ocupacaoMesas,
     // Propriedades raiz para compatibilidade estrita com Fila 1:
     fila: f1.fila,
     primeiraDaFila: f1.primeiraDaFila,

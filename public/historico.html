@@ -212,6 +212,7 @@
             <span>F1: <strong id="rep-f1" style="color:#dc2626">0</strong></span>
             <span>F2: <strong id="rep-f2" style="color:#16a34a">0</strong></span>
             <span>F3: <strong id="rep-f3" style="color:#ec4899">0</strong></span>
+            <span>Mesas: <strong id="rep-mesas-cadeiras" style="color:#0284c7">0/216</strong> (<span id="rep-mesas-perc">0%</span>)</span>
             <span>Atendidos/Saídas: <strong id="rep-atendidos" style="color:var(--primary)">0</strong></span>
             <span>Vazão Recente: <strong id="rep-vazao">0,0</strong> p/min</span>
           </div>
@@ -289,6 +290,36 @@
               <div class="hud-stat">
                 <span class="label">P90 até a Saída</span>
                 <span class="value" id="ts-p90">00:00</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card: Ocupação do Salão e Mesas (216 Lugares) -->
+          <div class="card" id="card-ocupacao-mesas" style="display:none;">
+            <div class="card-title">
+              <span>Ocupação do Salão e Mesas (4 fileiras × 9 mesas = 216 cadeiras)</span>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Capacidade física do RU</span>
+            </div>
+            <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:10px; margin-top:6px;">
+              <div class="hud-stat">
+                <span class="label">Pico de Ocupação</span>
+                <span class="value" id="mesas-pico-cadeiras" style="color:#0284c7">0 cad.</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-pico-perc">0% da capacidade</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Horário do Pico</span>
+                <span class="value" id="mesas-pico-tempo">--:--</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-status-pico">Tranquilo</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Média de Lugares Ocupados</span>
+                <span class="value" id="mesas-media-cadeiras">0 cad.</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-media-perc">0% em média</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Cadeiras Livres no Pico</span>
+                <span class="value" id="mesas-livres-pico">216</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)">de 216 lugares</span>
               </div>
             </div>
           </div>
