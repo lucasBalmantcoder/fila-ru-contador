@@ -542,6 +542,23 @@ export class AnimadorFila {
             const totalSaida = estado.filas?.[3]?.contadores?.atendidas ?? 0;
             contSaida.textContent = `${totalSaida} saíram`;
         }
+
+        // Rótulo da Fila 3 / Fluxo de Saída
+        const rotuloF3 = document.getElementById("rotulo_f3");
+        if (rotuloF3) {
+            const filasAtivas = estado.filasAtivas || [1];
+            if (!filasAtivas.includes(3)) {
+                rotuloF3.textContent = "Fila 3 (não coletada)";
+                rotuloF3.setAttribute("fill", "#94a3b8");
+            } else if (filasAtivas.includes(2)) {
+                rotuloF3.textContent = "Saída";
+                rotuloF3.setAttribute("fill", "#64748b");
+            } else {
+                const totalF3 = estado.filas?.[3]?.fila?.length || 0;
+                rotuloF3.textContent = `Fila 3 (${totalF3})`;
+                rotuloF3.setAttribute("fill", "#334155");
+            }
+        }
     }
 
     // ========================================================================
@@ -604,6 +621,74 @@ export class AnimadorFila {
     }
 
     /**
+     * Anima a saída contínua de um aluno das mesas até a saída (Fila 3 encadeada).
+     * O bloco emerge da base das mesas (192, 258) e desce suave e continuamente até a saída (192, 505),
+     * sem paradas no corredor e com espaçamento seguro (anti-colisão) em caso de saídas simultâneas.
+     * @param {number|string} pessoa
+     */
+    animarSaidaMesas(pessoa) {
+        if (!this.camadaPessoas || !this.habilitada) return;
+
+        const agora = Date.now();
+        const delay = Math.max(0, (this.ultimoTempoSaidaLive || 0) + 350 - agora);
+        this.ultimoTempoSaidaLive = agora + delay;
+
+        setTimeout(() => {
+            try {
+                const g = document.createElementNS("http://www.w3.org/2000/svg", "g");
+                g.setAttribute("class", "item-pessoa transito-saida");
+                g.dataset.pessoa = String(pessoa);
+                g.dataset.fila = "3";
+
+                const ptInicio = { x: 192, y: 258, w: 24, h: 10 };
+                const ptFim = { x: 192, y: 505 };
+
+                g.style.transition = "none";
+                g.setAttribute("transform", `translate(${ptInicio.x}, ${ptInicio.y})`);
+                g.style.opacity = "1";
+
+                const rect = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+                rect.setAttribute("x", -ptInicio.w / 2);
+                rect.setAttribute("y", -ptInicio.h / 2);
+                rect.setAttribute("width", ptInicio.w);
+                rect.setAttribute("height", ptInicio.h);
+                rect.setAttribute("rx", "1.5");
+                rect.setAttribute("fill", CORES.cabecaF3 || "#f97316");
+                g.appendChild(rect);
+
+                const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
+                text.setAttribute("x", "0");
+                text.setAttribute("y", "0");
+                text.setAttribute("text-anchor", "middle");
+                text.setAttribute("dominant-baseline", "central");
+                text.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
+                text.setAttribute("font-size", "8");
+                text.setAttribute("font-weight", "bold");
+                text.setAttribute("fill", "#ffffff");
+                text.textContent = String(pessoa);
+                g.appendChild(text);
+
+                this.camadaPessoas.appendChild(g);
+
+                // No frame seguinte, inicia deslocamento contínuo até a saída
+                requestAnimationFrame(() => {
+                    g.style.transition = "transform 1.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 1.3s ease";
+                    g.setAttribute("transform", `translate(${ptFim.x}, ${ptFim.y})`);
+                    g.style.opacity = "0";
+
+                    setTimeout(() => {
+                        if (g && g.parentNode) {
+                            g.remove();
+                        }
+                    }, 1350);
+                });
+            } catch (err) {
+                console.warn("Aviso na animação de saída das mesas:", err);
+            }
+        }, delay);
+    }
+
+    /**
      * Aplica operações atômicas recebidas pelo diff de estados em tempo real.
      */
     aplicarOperacoes(diff = [], estadoNovo) {
@@ -619,9 +704,16 @@ export class AnimadorFila {
             return;
         }
 
+        const filasAtivas = estadoNovo?.filasAtivas || [1];
+
         for (const op of diff) {
             if (op.op === "confirmar") {
                 const fNum = op.fila || 1;
+                if (fNum === 3 && filasAtivas.includes(2)) {
+                    // Aluno concluiu a refeição nas mesas e realiza o percurso contínuo até a saída
+                    this.animarSaidaMesas(op.pessoa);
+                    continue;
+                }
                 const no = this.camadaPessoas.querySelector(`[data-chave="f${fNum}_p${op.pessoa}"]`);
                 if (no) {
                     const posDest = this.obterPosicaoDestino(fNum);
@@ -632,14 +724,28 @@ export class AnimadorFila {
                 }
             } else if (op.op === "transferir") {
                 const fOrig = op.fila || op.deFila || 1;
+                const fDest = op.paraFila || (fOrig + 1);
                 const noOrig = this.camadaPessoas.querySelector(`[data-chave="f${fOrig}_p${op.pessoa}"]`) ||
                                this.camadaPessoas.querySelector(`[data-chave="f1_p${op.pessoa}"]`);
                 if (noOrig) {
-                    const posDest = this.obterPosicaoDestino(fOrig);
-                    noOrig.style.transition = "transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease";
-                    noOrig.setAttribute("transform", `translate(${posDest.x}, ${posDest.y})`);
-                    noOrig.style.opacity = "0";
-                    setTimeout(() => noOrig.remove(), 500);
+                    if (fOrig === 2 && fDest === 3) {
+                        // Transição da Fila 2 para as Mesas: o bloco entra na caixa Mesas e é acomodado
+                        noOrig.style.transition = "transform 0.7s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.5s ease";
+                        noOrig.setAttribute("transform", `translate(${CAIXAS.mesas.cx}, ${CAIXAS.mesas.cy})`);
+                        noOrig.style.opacity = "0";
+                        setTimeout(() => noOrig.remove(), 700);
+                    } else {
+                        const posDest = this.obterPosicaoDestino(fOrig);
+                        noOrig.style.transition = "transform 0.5s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 0.4s ease";
+                        noOrig.setAttribute("transform", `translate(${posDest.x}, ${posDest.y})`);
+                        noOrig.style.opacity = "0";
+                        setTimeout(() => noOrig.remove(), 500);
+                    }
+                }
+            } else if (op.op === "entrar") {
+                if (op.fila === 3 && filasAtivas.includes(2)) {
+                    // Entrada nas Mesas via Fila 2: não cria bloco no corredor de saída
+                    continue;
                 }
             } else if (op.op === "anular") {
                 const fNum = op.fila || 1;
@@ -701,6 +807,9 @@ export class AnimadorFila {
                 } else if (fObj?.semDados) {
                     rotuloEl.textContent = `Fila ${fNum} (sem dados)`;
                     rotuloEl.setAttribute("fill", "#d97706");
+                } else if (fNum === 3 && filasAtivas.includes(2)) {
+                    rotuloEl.textContent = "Saída";
+                    rotuloEl.setAttribute("fill", "#64748b");
                 } else {
                     rotuloEl.textContent = `Fila ${fNum} (${filaArray.length})`;
                     rotuloEl.setAttribute("fill", "#334155");
@@ -708,6 +817,12 @@ export class AnimadorFila {
             }
 
             if (!ativa) continue;
+
+            // Se a Fila 3 estiver associada à Fila 2, os alunos estão acomodados nas mesas
+            // (exibidos no contador X/216 e barra). Não gera blocos estáticos parados no corredor.
+            if (fNum === 3 && filasAtivas.includes(2)) {
+                continue;
+            }
 
             const totalPessoas = filaArray.length;
             const compMax = this.obterComprimentoMaximoCaminho(fNum);

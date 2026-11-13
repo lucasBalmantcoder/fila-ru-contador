@@ -5,6 +5,7 @@
  */
 
 import { derivarEstado, diffEstado } from '../shared/estado.js';
+import { TimelineAnimada, MotorMovimento, CAIXAS } from '../shared/movimento.js';
 import {
   calcularEstatisticas,
   calcularComprimentoFilaTempo,
@@ -654,6 +655,66 @@ assert(metMesas.estatisticasMesas.picoOcupadas === 2, 'Pico de ocupação regist
 assert(metMesas.estatisticasMesas.totalEventosEntrada === 2, 'Total de 2 entradas registradas nas mesas');
 
 if (gsMulti.sessaoAtiva) gsMulti.encerrarSessao();
+
+/* --------------------------------------------------------------------------
+   26. Teste: Nova Lógica da Fila 3 e Movimento Contínuo das Mesas até a Saída
+   -------------------------------------------------------------------------- */
+console.log('\n--- 26. Nova Lógica da Fila 3 e Saída das Mesas ---');
+
+// Eventos de uma sessão completa F1 -> F2 -> F3:
+// Pessoa 1 chega em t=1000, catraca em t=5000, mesas em t=10000, saída em t=30000
+// Pessoa 2 chega em t=2000, catraca em t=6000, mesas em t=11000, saída em t=30100 (saída quase simultânea)
+const evsTesteF3 = [
+  { seq: 1, t: 1000, tipo: 'sessao_iniciada', config: { config: { filasAtivas: [1, 2, 3] } } },
+  { seq: 2, t: 1000, tipo: 'chegada', fila: 1, pessoa: 1 },
+  { seq: 3, t: 2000, tipo: 'chegada', fila: 1, pessoa: 2 },
+  { seq: 4, t: 5000, tipo: 'atendimento', fila: 1, pessoa: 1 },
+  { seq: 5, t: 5000, tipo: 'chegada', fila: 2, pessoa: 1, encadeado: true },
+  { seq: 6, t: 6000, tipo: 'atendimento', fila: 1, pessoa: 2 },
+  { seq: 7, t: 6000, tipo: 'chegada', fila: 2, pessoa: 2, encadeado: true },
+  { seq: 8, t: 10000, tipo: 'atendimento', fila: 2, pessoa: 1 },
+  { seq: 9, t: 10000, tipo: 'chegada', fila: 3, pessoa: 1, encadeado: true },
+  { seq: 10, t: 11000, tipo: 'atendimento', fila: 2, pessoa: 2 },
+  { seq: 11, t: 11000, tipo: 'chegada', fila: 3, pessoa: 2, encadeado: true },
+  { seq: 12, t: 30000, tipo: 'atendimento', fila: 3, pessoa: 1 },
+  { seq: 13, t: 30100, tipo: 'atendimento', fila: 3, pessoa: 2 }
+];
+
+const timeline = new TimelineAnimada(evsTesteF3, { filasAtivas: [1, 2, 3] });
+
+// 1. Enquanto os alunos estão comendo (ex: t=20000), NÃO deve haver blocos na Fila 3
+const estadoT20k = timeline.obterEstado(20000);
+const blocosF3EmT20k = estadoT20k.blocos.filter(b => b.fila === 3);
+assert(blocosF3EmT20k.length === 0, 'Enquanto comem nas mesas, não acumula blocos estáticos na Fila 3');
+
+// 2. No instante em que o aluno 1 sai (t=30500, no meio do percurso até a saída), o bloco deve estar em movimento
+const estadoT30k500 = timeline.obterEstado(30500);
+const bloco1Saindo = estadoT30k500.blocos.find(b => b.pessoa === 1);
+assert(bloco1Saindo !== undefined, 'Pessoa 1 emerge das mesas e está visível a caminho da saída');
+assert(bloco1Saindo.x === 192, 'Pessoa 1 segue a rota vertical de saída (x = 192)');
+assert(bloco1Saindo.y > 258 && bloco1Saindo.y < 505, 'Pessoa 1 está em trânsito contínuo entre Mesas (y=258) e Saída (y=505)');
+
+// 3. Verificação de anti-colisão / escalonamento seguro para saídas simultâneas
+const estadoT30k800 = timeline.obterEstado(30800);
+const b1Em30k800 = estadoT30k800.blocos.find(b => b.pessoa === 1);
+const b2Em30k800 = estadoT30k800.blocos.find(b => b.pessoa === 2);
+assert(b1Em30k800 !== undefined && b2Em30k800 !== undefined, 'Ambos os alunos visíveis no fluxo de saída');
+assert(b1Em30k800.y > b2Em30k800.y, 'Pessoa 1 vai à frente da Pessoa 2 sem sobreposição');
+const distanciaY = b1Em30k800.y - b2Em30k800.y;
+assert(distanciaY >= 20, `Espaçamento seguro entre blocos mantido (distância = ${distanciaY.toFixed(1)}px >= 20px)`);
+
+// 4. Após concluírem a saída (t=35000), ambos os blocos já desvaneceram
+const estadoT35k = timeline.obterEstado(35000);
+const blocosF3EmT35k = estadoT35k.blocos.filter(b => b.fila === 3);
+assert(blocosF3EmT35k.length === 0, 'Após concluírem a saída, os blocos deixam a tela');
+
+// 5. MotorMovimento não cria blocos estáticos na Fila 3 quando F2 ativa
+const motor = new MotorMovimento();
+const estComMesas = derivarEstado(evsTesteF3, 20000, { filasAtivas: [1, 2, 3] });
+motor.aplicarSnapshot(estComMesas);
+const renderMotor = motor.obterDadosRenderizacao();
+const blocosF3Motor = renderMotor.blocos.filter(b => b.fila === 3);
+assert(blocosF3Motor.length === 0, 'MotorMovimento não gera blocos na Fila 3 enquanto alunos comem');
 
 try {
   fs.rmSync(dirTempTeste, { recursive: true, force: true });
