@@ -30,6 +30,10 @@ export class ControladorReplay {
     this.arrastando = false;
     this.tocavaAntesDoArrasto = false;
 
+    // Cache inteligente de estado derivado (evita rodar O(N) 60x por segundo a cada frame)
+    this.ultimoIdxEvento = -2;
+    this.ultimoEstadoDerivado = null;
+
     // Callbacks da aplicação
     this.onTick = opcoes.onTick || (() => {});
     this.onFim = opcoes.onFim || (() => {});
@@ -58,8 +62,10 @@ export class ControladorReplay {
     this.tFim = this.eventos[this.eventos.length - 1].t;
     this.duracaoTotalMs = Math.max(1000, this.tFim - this.tInicio);
     this.tAtual = this.tInicio;
+    this.ultimoIdxEvento = -2;
+    this.ultimoEstadoDerivado = null;
 
-    this.notificarTick();
+    this.notificarTick(true);
   }
 
   /**
@@ -152,7 +158,7 @@ export class ControladorReplay {
   reiniciar() {
     this.pausar();
     this.tAtual = this.tInicio;
-    this.notificarTick();
+    this.notificarTick(true);
   }
 
   /**
@@ -245,12 +251,44 @@ export class ControladorReplay {
   }
 
   /**
-   * Dispara o callback onTick com o instante tAtual e o estado derivado naquele instante.
+   * Busca binária eficiente O(log N) para identificar o último evento ocorrido até o instante t.
    */
-  notificarTick() {
-    const estado = derivarEstado(this.eventos, this.tAtual, this.configSessao);
+  obterIndiceEventoAte(t) {
+    if (!this.eventos || this.eventos.length === 0) return -1;
+    if (t < this.eventos[0].t) return -1;
+    if (t >= this.eventos[this.eventos.length - 1].t) return this.eventos.length - 1;
+
+    let baixo = 0;
+    let alto = this.eventos.length - 1;
+    let idx = -1;
+
+    while (baixo <= alto) {
+      const meio = (baixo + alto) >> 1;
+      if (this.eventos[meio].t <= t) {
+        idx = meio;
+        baixo = meio + 1;
+      } else {
+        alto = meio - 1;
+      }
+    }
+    return idx;
+  }
+
+  /**
+   * Dispara o callback onTick com o instante tAtual e o estado derivado naquele instante.
+   * Utiliza cache inteligente de evento: só reexecuta derivarEstado quando o instante
+   * cruza a fronteira de um evento, garantindo fluidez absoluta a 60 fps.
+   */
+  notificarTick(forcarRecalculo = false) {
+    const idxEvento = this.obterIndiceEventoAte(this.tAtual);
+
+    if (forcarRecalculo || idxEvento !== this.ultimoIdxEvento || !this.ultimoEstadoDerivado) {
+      this.ultimoIdxEvento = idxEvento;
+      this.ultimoEstadoDerivado = derivarEstado(this.eventos, this.tAtual, this.configSessao);
+    }
+
     const progresso = this.obterProgresso();
-    this.onTick(this.tAtual, progresso, estado);
+    this.onTick(this.tAtual, progresso, this.ultimoEstadoDerivado);
   }
 
   /**

@@ -277,13 +277,14 @@ function easeOutCubic(u) {
 }
 
 // ============================================================================
-// TIMELINE ANIMADA DETERMINÍSTICA
+// TIMELINE ANIMADA DETERMINÍSTICA (VERSÃO OTIMIZADA E CONTÍNUA)
 // ============================================================================
 
 /**
  * Constrói a timeline contínua de movimento determinístico de todos os blocos.
  * Permite obter a posição e estado exato de cada pessoa em qualquer instante t,
- * com interpolação contínua e suave, independente de velocidade ou reprodução.
+ * com interpolação contínua e suave, sem sobreposição, sem buracos temporais
+ * e com rastreamento contínuo de identidade dos blocos através das etapas.
  */
 export class TimelineAnimada {
   constructor(eventos = [], config = {}) {
@@ -293,7 +294,7 @@ export class TimelineAnimada {
     this.tFim = 0;
     this.duracaoTotalMs = 0;
 
-    // Mapa de segmentos de trajetória: pessoaId -> Array<Segmento>
+    // Mapa de segmentos de trajetória: chavePessoa -> Array<Segmento>
     this.trajetorias = new Map();
     // Cache de filas ativas da sessão
     this.filasAtivas = [1];
@@ -325,16 +326,46 @@ export class TimelineAnimada {
       ? cfg.filasAtivas.map(Number)
       : [1];
 
-    // Estruturas de controle durante a varredura cronológica
-    const estadoFilas = { 1: [], 2: [], 3: [] }; // arrays ordenados de pessoaId em cada fila
-    const infoPessoa = new Map(); // pessoaId -> { fila, slotIdx, ultTimestamp, segmentos: [] }
+    // Constantes de duração visual fluida
+    const DUR_CHEGADA = 1800;   // Tempo para deslizar suavemente da entrada física até o slot
+    const DUR_AVANCO = 600;     // Tempo para avançar 1 posição na fila
+    const DUR_CONECTOR = 700;   // Tempo atravessando a caixa intermediária (Catraca ou Mesas)
+    const DUR_ROTA_F2 = 1400;   // Tempo contornando a caixa Atendimento até o slot na Fila 2
+    const DUR_SAIDA = 900;      // Tempo entrando na caixa terminal e sumindo
+    const DUR_ANULACAO = 400;   // Tempo de encolhimento e fade out por anulação
+    const DUR_REVERSAO = 700;   // Tempo recuando de volta para a cabeça da fila
 
-    // Duração base de animações em milissegundos
-    const DUR_CHEGADA_BASE = 2400; // Tempo do bloco descendo da origem até o slot
-    const DUR_AVANCO_BASE = 800;   // Tempo para avançar 1 posição na fila
-    const DUR_TRANSITO_BOX = 900;  // Tempo atravessando a catraca ou mesas
-    const DUR_SAIDA = 1000;        // Tempo entrando na caixa de saída e sumindo
-    const DUR_ANULACAO = 500;      // Tempo de fade out por anulação
+    // Estruturas de controle
+    const estadoFilas = { 1: [], 2: [], 3: [] }; // arrays ordenados de pessoas em cada fila
+    const infoPessoas = new Map(); // chavePessoa -> { pessoaId, chave, fila, segmentos: [] }
+    const emTransitoEncadeado = new Set(); // conjunto de pessoas que já transitaram para a fila seguinte
+
+    // Auxiliar para adicionar segmento garantindo continuidade temporal perfeita (0 buracos negros)
+    const adicionarSegmento = (pDados, seg) => {
+      if (pDados.segmentos.length > 0) {
+        const ult = pDados.segmentos[pDados.segmentos.length - 1];
+        if (ult.t1 > seg.t0) {
+          ult.t1 = seg.t0;
+        }
+      }
+      if (seg.t1 !== Infinity && seg.t1 <= seg.t0) {
+        seg.t1 = seg.t0 + 1;
+      }
+      pDados.segmentos.push(seg);
+    };
+
+    const obterOuCriarPessoa = (pId, fNum) => {
+      const chave = `p_${pId}`;
+      if (!infoPessoas.has(chave)) {
+        infoPessoas.set(chave, {
+          pessoaId: pId,
+          chave,
+          fila: fNum,
+          segmentos: []
+        });
+      }
+      return infoPessoas.get(chave);
+    };
 
     for (let k = 0; k < evs.length; k++) {
       const ev = evs[k];
@@ -342,61 +373,48 @@ export class TimelineAnimada {
       const fNum = Number(ev.fila || 1);
       const pId = ev.pessoa;
 
-      // Intervalo disponível até o próximo evento da sessão
-      const tProxEv = (k < evs.length - 1) ? evs[k + 1].t : (tEv + 10000);
-      const deltaProx = Math.max(20, tProxEv - tEv);
-
-      // Garante estrutura da pessoa
-      if (pId !== undefined && !infoPessoa.has(pId)) {
-        infoPessoa.set(pId, {
-          pessoaId: pId,
-          fila: fNum,
-          slotIdx: 0,
-          ultTimestamp: tEv,
-          segmentos: []
-        });
-      }
+      if (pId === undefined || pId === null) continue;
 
       if (ev.tipo === 'chegada') {
-        const pDados = infoPessoa.get(pId);
+        // Se a chegada for encadeada (ou seja, gerada pela saída da fila anterior),
+        // ela já foi integrada na transição contínua do evento de atendimento anterior
+        if (ev.encadeado || ev.origem === 'encadeada' || emTransitoEncadeado.has(pId)) {
+          emTransitoEncadeado.delete(pId);
+          continue;
+        }
+
+        const pDados = obterOuCriarPessoa(pId, fNum);
         pDados.fila = fNum;
 
-        const rota = ROTAS[fNum];
-        const compTotal = calcularComprimentoPolilinha(rota);
-
-        // Posição que o novo bloco ocupará na cauda da fila
         const filaAtual = estadoFilas[fNum];
         const novoIdx = filaAtual.length;
         filaAtual.push(pId);
-        pDados.slotIdx = novoIdx;
 
         const slotAlvo = obterPosicaoSlot(fNum, novoIdx, filaAtual.length);
+        const rota = ROTAS[fNum];
 
-        // Duração da chegada adaptada: suave, mas sem colidir com o próximo evento se em lote
-        const durEfetiva = Math.min(DUR_CHEGADA_BASE, deltaProx);
-
-        // Segmento 1: Bloco nasce na origem e desliza até seu slot na fila
-        pDados.segmentos.push({
+        // Segmento 1: Bloco nasce na origem física da fila e desliza suavemente até o slot
+        adicionarSegmento(pDados, {
           t0: tEv,
-          t1: tEv + durEfetiva,
+          t1: tEv + DUR_CHEGADA,
           tipo: 'rota',
           fila: fNum,
           rota,
-          dist0: 0, // Início da rota física (origem da fila)
-          dist1: slotAlvo.distDoInicio, // Posição estática do slot
-          cor0: CORES.recemCriado, // Roxo nos primeiros instantes
+          dist0: 0,
+          dist1: slotAlvo.distDoInicio,
+          cor0: CORES.recemCriado,
           cor1: (novoIdx === 0 && fNum === 1) ? CORES.cabecaF1 : CORES[`fila${fNum}`],
           ehCabeca: (novoIdx === 0),
-          opacidade0: 1,
+          opacidade0: 0.9,
           opacidade1: 1,
-          escala0: 1,
+          escala0: 0.9,
           escala1: 1
         });
 
-        // Segmento 2: Bloco repousa no slot até que outro evento altere sua posição
-        pDados.segmentos.push({
-          t0: tEv + durEfetiva,
-          t1: tProxEv,
+        // Segmento 2: Repousa estaticamente no slot até que outro evento futuro o mova
+        adicionarSegmento(pDados, {
+          t0: tEv + DUR_CHEGADA,
+          t1: Infinity,
           tipo: 'parado',
           fila: fNum,
           rota,
@@ -407,17 +425,14 @@ export class TimelineAnimada {
           escala: 1
         });
 
-        pDados.ultTimestamp = tProxEv;
-
       } else if (ev.tipo === 'atendimento') {
-        const pDados = infoPessoa.get(pId);
+        const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
         const idxFila = filaAtual.indexOf(pId);
         if (idxFila !== -1) {
           filaAtual.splice(idxFila, 1);
         }
 
-        // Verifica se a saída desta fila gera entrada encadeada na etapa seguinte
         const ehEncadeada = (fNum === 1 && this.filasAtivas.includes(2)) ||
                             (fNum === 2 && this.filasAtivas.includes(3));
 
@@ -426,117 +441,103 @@ export class TimelineAnimada {
           const filaDestino = estadoFilas[proxFila];
           const slotDestIdx = filaDestino.length;
           filaDestino.push(pId);
+          emTransitoEncadeado.add(pId);
 
-          if (pDados) {
-            pDados.fila = proxFila;
-            pDados.slotIdx = slotDestIdx;
+          pDados.fila = proxFila;
 
-            const chaveConector = `${fNum}>${proxFila}`;
-            const rotaConector = CONECTORES[chaveConector] || [];
-            const rotaDestino = ROTAS[proxFila];
-            const compRotaDest = calcularComprimentoPolilinha(rotaDestino);
-            const slotDest = obterPosicaoSlot(proxFila, slotDestIdx, filaDestino.length);
+          const chaveConector = `${fNum}>${proxFila}`;
+          const rotaConector = CONECTORES[chaveConector] || [];
+          const rotaDestino = ROTAS[proxFila];
+          const slotDest = obterPosicaoSlot(proxFila, slotDestIdx, filaDestino.length);
 
-            const durTotal = Math.min(DUR_CHEGADA_BASE + DUR_TRANSITO_BOX, deltaProx);
-            const durBox = Math.min(DUR_TRANSITO_BOX, durTotal * 0.35);
-            const durEntrada = durTotal - durBox;
+          const durBox = DUR_CONECTOR;
+          const durRotaDest = (proxFila === 2) ? DUR_ROTA_F2 : DUR_CHEGADA;
 
-            // Segmento A: Atravessa a caixa intermediária (Catraca ou Mesas)
-            pDados.segmentos.push({
-              t0: tEv,
-              t1: tEv + durBox,
-              tipo: 'conector',
-              fila: fNum,
-              conector: rotaConector,
-              cor: (fNum === 1) ? CORES.cabecaF1 : CORES.cabecaF2,
-              ehCabeca: false,
-              opacidade0: 1,
-              opacidade1: 1,
-              escala0: 1,
-              escala1: 1
-            });
+          // Segmento A: Atravessa a caixa intermediária (Catraca ou Mesas)
+          adicionarSegmento(pDados, {
+            t0: tEv,
+            t1: tEv + durBox,
+            tipo: 'conector',
+            fila: fNum,
+            conector: rotaConector,
+            cor: (fNum === 1) ? CORES.cabecaF1 : CORES.cabecaF2,
+            ehCabeca: false,
+            opacidade0: 1,
+            opacidade1: 1,
+            escala0: 1,
+            escala1: 1
+          });
 
-            // Segmento B: Percorre a rota da próxima fila contornando caixas até o slot
-            pDados.segmentos.push({
-              t0: tEv + durBox,
-              t1: tEv + durTotal,
-              tipo: 'rota',
-              fila: proxFila,
-              rota: rotaDestino,
-              dist0: 0,
-              dist1: slotDest.distDoInicio,
-              cor0: CORES[`fila${proxFila}`],
-              cor1: (slotDestIdx === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
-              ehCabeca: (slotDestIdx === 0),
-              opacidade0: 1,
-              opacidade1: 1,
-              escala0: 1,
-              escala1: 1
-            });
+          // Segmento B: Percorre a rota da próxima fila contornando caixas até o slot
+          adicionarSegmento(pDados, {
+            t0: tEv + durBox,
+            t1: tEv + durBox + durRotaDest,
+            tipo: 'rota',
+            fila: proxFila,
+            rota: rotaDestino,
+            dist0: 0,
+            dist1: slotDest.distDoInicio,
+            cor0: CORES[`fila${proxFila}`],
+            cor1: (slotDestIdx === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
+            ehCabeca: (slotDestIdx === 0),
+            opacidade0: 1,
+            opacidade1: 1,
+            escala0: 1,
+            escala1: 1
+          });
 
-            // Segmento C: Repousa no slot da nova fila
-            pDados.segmentos.push({
-              t0: tEv + durTotal,
-              t1: tProxEv,
-              tipo: 'parado',
-              fila: proxFila,
-              rota: rotaDestino,
-              dist: slotDest.distDoInicio,
-              cor: (slotDestIdx === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
-              ehCabeca: (slotDestIdx === 0),
-              opacidade: 1,
-              escala: 1
-            });
-
-            pDados.ultTimestamp = tProxEv;
-          }
+          // Segmento C: Repousa no slot da nova fila
+          adicionarSegmento(pDados, {
+            t0: tEv + durBox + durRotaDest,
+            t1: Infinity,
+            tipo: 'parado',
+            fila: proxFila,
+            rota: rotaDestino,
+            dist: slotDest.distDoInicio,
+            cor: (slotDestIdx === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
+            ehCabeca: (slotDestIdx === 0),
+            opacidade: 1,
+            escala: 1
+          });
 
         } else {
-          // Saída definitiva do restaurante: caminha para dentro da caixa e desaparece
-          if (pDados) {
-            const caixaAlvo = fNum === 1 ? CAIXAS.catraca : (fNum === 2 ? CAIXAS.mesas : CAIXAS.saida);
-            const rotaFila = ROTAS[fNum];
-            const ptSaida = interpolarPolilinha(rotaFila, calcularComprimentoPolilinha(rotaFila));
-            const durSaidaEfetiva = Math.min(DUR_SAIDA, deltaProx);
+          // Saída definitiva: entra na caixa física correspondente e desvanece
+          const caixaAlvo = fNum === 1 ? CAIXAS.catraca : (fNum === 2 ? CAIXAS.mesas : CAIXAS.saida);
+          const rotaFila = ROTAS[fNum];
+          const ptSaida = interpolarPolilinha(rotaFila, calcularComprimentoPolilinha(rotaFila));
 
-            pDados.segmentos.push({
-              t0: tEv,
-              t1: tEv + durSaidaEfetiva,
-              tipo: 'saida',
-              fila: fNum,
-              x0: ptSaida.x,
-              y0: ptSaida.y,
-              x1: caixaAlvo.cx,
-              y1: caixaAlvo.cy,
-              cor: (fNum === 3) ? CORES.cabecaF3 : CORES[`fila${fNum}`],
-              ehCabeca: false,
-              opacidade0: 1,
-              opacidade1: 0,
-              escala0: 1,
-              escala1: 0.8
-            });
-
-            pDados.ultTimestamp = tEv + durSaidaEfetiva;
-          }
+          adicionarSegmento(pDados, {
+            t0: tEv,
+            t1: tEv + DUR_SAIDA,
+            tipo: 'saida',
+            fila: fNum,
+            x0: ptSaida.x,
+            y0: ptSaida.y,
+            x1: caixaAlvo.cx,
+            y1: caixaAlvo.cy,
+            cor: (fNum === 3) ? CORES.cabecaF3 : CORES[`fila${fNum}`],
+            ehCabeca: false,
+            opacidade0: 1,
+            opacidade1: 0,
+            escala0: 1,
+            escala1: 0.6
+          });
         }
 
-        // Avanço em sequência dos demais blocos da fila (abrem espaço conforme o da frente sai)
+        // Avanço em cascata (efeito sanfona) dos demais blocos da fila que abriram espaço
         const rotaFila = ROTAS[fNum];
         for (let i = 0; i < filaAtual.length; i++) {
           const pessoaSeguinteId = filaAtual[i];
-          const segDados = infoPessoa.get(pessoaSeguinteId);
-          if (!segDados) continue;
+          const segDados = obterOuCriarPessoa(pessoaSeguinteId, fNum);
 
           const slotAnterior = obterPosicaoSlot(fNum, i + 1, filaAtual.length + 1);
           const slotNovo = obterPosicaoSlot(fNum, i, filaAtual.length);
 
-          // Delay em cascata para avanço em sequência (efeito sanfona natural)
-          const delayCascata = Math.min(i * 90, deltaProx * 0.3);
-          const durAvanco = Math.min(DUR_AVANCO_BASE, deltaProx * 0.6);
+          const delayCascata = i * 90;
 
-          // Repouso breve antes de avançar
+          // Se houver delay, aguarda na posição anterior
           if (delayCascata > 0) {
-            segDados.segmentos.push({
+            adicionarSegmento(segDados, {
               t0: tEv,
               t1: tEv + delayCascata,
               tipo: 'parado',
@@ -550,10 +551,10 @@ export class TimelineAnimada {
             });
           }
 
-          // Deslocamento contínuo para a posição da frente
-          segDados.segmentos.push({
+          // Deslocamento contínuo para o slot à frente
+          adicionarSegmento(segDados, {
             t0: tEv + delayCascata,
-            t1: tEv + delayCascata + durAvanco,
+            t1: tEv + delayCascata + DUR_AVANCO,
             tipo: 'rota',
             fila: fNum,
             rota: rotaFila,
@@ -569,9 +570,9 @@ export class TimelineAnimada {
           });
 
           // Repouso na nova posição até o próximo evento
-          segDados.segmentos.push({
-            t0: tEv + delayCascata + durAvanco,
-            t1: tProxEv,
+          adicionarSegmento(segDados, {
+            t0: tEv + delayCascata + DUR_AVANCO,
+            t1: Infinity,
             tipo: 'parado',
             fila: fNum,
             rota: rotaFila,
@@ -581,57 +582,45 @@ export class TimelineAnimada {
             opacidade: 1,
             escala: 1
           });
-
-          segDados.slotIdx = i;
-          segDados.ultTimestamp = tProxEv;
         }
 
       } else if (ev.tipo === 'anulacao') {
-        const pDados = infoPessoa.get(pId);
+        const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
         const idxFila = filaAtual.indexOf(pId);
         if (idxFila !== -1) {
           filaAtual.splice(idxFila, 1);
         }
 
-        if (pDados) {
-          const rotaFila = ROTAS[fNum];
-          const slotAtual = obterPosicaoSlot(fNum, idxFila >= 0 ? idxFila : 0, filaAtual.length + 1);
-          const durAnulEfetiva = Math.min(DUR_ANULACAO, deltaProx);
-
-          pDados.segmentos.push({
-            t0: tEv,
-            t1: tEv + durAnulEfetiva,
-            tipo: 'anulacao',
-            fila: fNum,
-            rota: rotaFila,
-            dist: slotAtual.distDoInicio,
-            cor: CORES[`fila${fNum}`],
-            ehCabeca: false,
-            opacidade0: 1,
-            opacidade1: 0,
-            escala0: 1,
-            escala1: 0.2
-          });
-
-          pDados.ultTimestamp = tEv + durAnulEfetiva;
-        }
-
-        // Pessoas de trás fecham a lacuna
         const rotaFila = ROTAS[fNum];
+        const slotAtual = obterPosicaoSlot(fNum, idxFila >= 0 ? idxFila : 0, filaAtual.length + 1);
+
+        adicionarSegmento(pDados, {
+          t0: tEv,
+          t1: tEv + DUR_ANULACAO,
+          tipo: 'anulacao',
+          fila: fNum,
+          rota: rotaFila,
+          dist: slotAtual.distDoInicio,
+          cor: CORES[`fila${fNum}`],
+          ehCabeca: false,
+          opacidade0: 1,
+          opacidade1: 0,
+          escala0: 1,
+          escala1: 0.2
+        });
+
+        // Pessoas atrás fecham a lacuna
         for (let i = idxFila; i < filaAtual.length; i++) {
           const pessoaSeguinteId = filaAtual[i];
-          const segDados = infoPessoa.get(pessoaSeguinteId);
-          if (!segDados) continue;
+          const segDados = obterOuCriarPessoa(pessoaSeguinteId, fNum);
 
           const slotAnterior = obterPosicaoSlot(fNum, i + 1, filaAtual.length + 1);
           const slotNovo = obterPosicaoSlot(fNum, i, filaAtual.length);
 
-          const durAvanco = Math.min(DUR_AVANCO_BASE, deltaProx);
-
-          segDados.segmentos.push({
+          adicionarSegmento(segDados, {
             t0: tEv,
-            t1: tEv + durAvanco,
+            t1: tEv + DUR_AVANCO,
             tipo: 'rota',
             fila: fNum,
             rota: rotaFila,
@@ -646,9 +635,9 @@ export class TimelineAnimada {
             escala1: 1
           });
 
-          segDados.segmentos.push({
-            t0: tEv + durAvanco,
-            t1: tProxEv,
+          adicionarSegmento(segDados, {
+            t0: tEv + DUR_AVANCO,
+            t1: Infinity,
             tipo: 'parado',
             fila: fNum,
             rota: rotaFila,
@@ -658,70 +647,58 @@ export class TimelineAnimada {
             opacidade: 1,
             escala: 1
           });
-
-          segDados.slotIdx = i;
-          segDados.ultTimestamp = tProxEv;
         }
 
       } else if (ev.tipo === 'reversao') {
-        const pDados = infoPessoa.get(pId);
+        const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
         filaAtual.unshift(pId);
 
         const rotaFila = ROTAS[fNum];
         const slotCabeca = obterPosicaoSlot(fNum, 0, filaAtual.length);
         const caixaOrig = fNum === 1 ? CAIXAS.catraca : (fNum === 2 ? CAIXAS.mesas : CAIXAS.saida);
-        const durRev = Math.min(800, deltaProx);
 
-        if (pDados) {
-          pDados.fila = fNum;
-          pDados.slotIdx = 0;
+        adicionarSegmento(pDados, {
+          t0: tEv,
+          t1: tEv + DUR_REVERSAO,
+          tipo: 'reversao',
+          fila: fNum,
+          x0: caixaOrig.cx,
+          y0: caixaOrig.cy,
+          x1: slotCabeca.x,
+          y1: slotCabeca.y,
+          cor: (fNum === 1 ? CORES.cabecaF1 : (fNum === 2 ? CORES.cabecaF2 : CORES.cabecaF3)),
+          ehCabeca: true,
+          opacidade0: 0.8,
+          opacidade1: 1,
+          escala0: 1,
+          escala1: 1
+        });
 
-          pDados.segmentos.push({
-            t0: tEv,
-            t1: tEv + durRev,
-            tipo: 'reversao',
-            fila: fNum,
-            x0: caixaOrig.cx,
-            y0: caixaOrig.cy,
-            x1: slotCabeca.x,
-            y1: slotCabeca.y,
-            cor: (fNum === 1 ? CORES.cabecaF1 : (fNum === 2 ? CORES.cabecaF2 : CORES.cabecaF3)),
-            ehCabeca: true,
-            opacidade0: 0.8,
-            opacidade1: 1,
-            escala0: 1,
-            escala1: 1
-          });
-
-          pDados.segmentos.push({
-            t0: tEv + durRev,
-            t1: tProxEv,
-            tipo: 'parado',
-            fila: fNum,
-            rota: rotaFila,
-            dist: slotCabeca.distDoInicio,
-            cor: (fNum === 1 ? CORES.cabecaF1 : (fNum === 2 ? CORES.cabecaF2 : CORES.cabecaF3)),
-            ehCabeca: true,
-            opacidade: 1,
-            escala: 1
-          });
-
-          pDados.ultTimestamp = tProxEv;
-        }
+        adicionarSegmento(pDados, {
+          t0: tEv + DUR_REVERSAO,
+          t1: Infinity,
+          tipo: 'parado',
+          fila: fNum,
+          rota: rotaFila,
+          dist: slotCabeca.distDoInicio,
+          cor: (fNum === 1 ? CORES.cabecaF1 : (fNum === 2 ? CORES.cabecaF2 : CORES.cabecaF3)),
+          ehCabeca: true,
+          opacidade: 1,
+          escala: 1
+        });
 
         // Pessoas de trás recuam 1 posição
         for (let i = 1; i < filaAtual.length; i++) {
           const pessoaSeguinteId = filaAtual[i];
-          const segDados = infoPessoa.get(pessoaSeguinteId);
-          if (!segDados) continue;
+          const segDados = obterOuCriarPessoa(pessoaSeguinteId, fNum);
 
           const slotAnterior = obterPosicaoSlot(fNum, i - 1, filaAtual.length - 1);
           const slotNovo = obterPosicaoSlot(fNum, i, filaAtual.length);
 
-          segDados.segmentos.push({
+          adicionarSegmento(segDados, {
             t0: tEv,
-            t1: tEv + durRev,
+            t1: tEv + DUR_REVERSAO,
             tipo: 'rota',
             fila: fNum,
             rota: rotaFila,
@@ -736,9 +713,9 @@ export class TimelineAnimada {
             escala1: 1
           });
 
-          segDados.segmentos.push({
-            t0: tEv + durRev,
-            t1: tProxEv,
+          adicionarSegmento(segDados, {
+            t0: tEv + DUR_REVERSAO,
+            t1: Infinity,
             tipo: 'parado',
             fila: fNum,
             rota: rotaFila,
@@ -748,23 +725,20 @@ export class TimelineAnimada {
             opacidade: 1,
             escala: 1
           });
-
-          segDados.slotIdx = i;
-          segDados.ultTimestamp = tProxEv;
         }
       }
     }
 
-    // Extensão final dos segmentos de repouso para que os blocos restantes permaneçam na posição no fim
-    const tMargemFinal = this.tFim + 300000;
-    for (const pDados of infoPessoa.values()) {
+    // Fechamento temporal perfeito: estende o repouso das pessoas ainda no sistema até além do fim da sessão
+    const tMargemFinal = this.tFim + 3600000;
+    for (const pDados of infoPessoas.values()) {
       if (pDados.segmentos.length > 0) {
         const ultSeg = pDados.segmentos[pDados.segmentos.length - 1];
-        if (ultSeg.tipo === 'parado') {
+        if (ultSeg.t1 === Infinity) {
           ultSeg.t1 = tMargemFinal;
         }
       }
-      this.trajetorias.set(pDados.pessoaId, pDados.segmentos);
+      this.trajetorias.set(pDados.chave, pDados.segmentos);
     }
   }
 
@@ -778,11 +752,10 @@ export class TimelineAnimada {
   obterEstado(t, estadoDerivado = null) {
     const blocos = [];
 
-    for (const [pessoaId, segmentos] of this.trajetorias.entries()) {
+    for (const [chavePessoa, segmentos] of this.trajetorias.entries()) {
       if (!segmentos || segmentos.length === 0) continue;
       if (t < segmentos[0].t0 || t > segmentos[segmentos.length - 1].t1) continue;
 
-      // Busca binária ou direta pelo segmento ativo no instante t
       let seg = null;
       for (let i = 0; i < segmentos.length; i++) {
         const s = segmentos[i];
@@ -812,7 +785,7 @@ export class TimelineAnimada {
         const distAtual = seg.dist0 + prog * (seg.dist1 - seg.dist0);
         pt = interpolarPolilinha(rota, distAtual);
         if (seg.cor0 && seg.cor1) {
-          cor = (u < 0.25) ? seg.cor0 : seg.cor1;
+          cor = (u < 0.3) ? seg.cor0 : seg.cor1;
         }
 
       } else if (seg.tipo === 'conector') {
@@ -836,9 +809,12 @@ export class TimelineAnimada {
       }
 
       if (pt && opacidade > 0.02) {
+        // Extrai o ID numérico da pessoa a partir da chave estável p_X
+        const pessoaId = parseInt(chavePessoa.replace('p_', ''), 10);
+
         blocos.push({
-          chave: `f${seg.fila}_p${pessoaId}`,
-          pessoa: pessoaId,
+          chave: chavePessoa, // Identidade estável única
+          pessoa: isNaN(pessoaId) ? chavePessoa : pessoaId,
           fila: seg.fila,
           x: Math.round(pt.x * 10) / 10,
           y: Math.round(pt.y * 10) / 10,

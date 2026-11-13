@@ -731,7 +731,11 @@ const HistoricoApp = {
   onSliderScrub(sliderVal) {
     if (this.controladorReplay) {
       const frac = parseFloat(sliderVal) / 1000;
-      this.controladorReplay.definirProgresso(frac);
+      if (this.controladorReplay.arrastando) {
+        this.controladorReplay.arrastarPara(frac);
+      } else {
+        this.controladorReplay.definirProgresso(frac);
+      }
     }
   },
 

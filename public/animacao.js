@@ -364,8 +364,9 @@ export class AnimadorFila {
 
                 const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
                 text.setAttribute("x", "0");
-                text.setAttribute("y", "3");
+                text.setAttribute("y", "0");
                 text.setAttribute("text-anchor", "middle");
+                text.setAttribute("dominant-baseline", "central");
                 text.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
                 text.setAttribute("font-size", "8");
                 text.setAttribute("font-weight", "bold");
@@ -377,6 +378,12 @@ export class AnimadorFila {
             }
 
             // Atualiza geometria e cor do retângulo do bloco
+            g.dataset.fila = String(b.fila);
+            const textEl = g.querySelector("text");
+            if (textEl && textEl.textContent !== String(b.pessoa)) {
+                textEl.textContent = String(b.pessoa);
+            }
+
             const rect = g.querySelector("rect");
             if (rect) {
                 rect.setAttribute("x", -b.w / 2);
@@ -656,8 +663,9 @@ export class AnimadorFila {
 
                     const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
                     text.setAttribute("x", "0");
-                    text.setAttribute("y", "3");
+                    text.setAttribute("y", "0");
                     text.setAttribute("text-anchor", "middle");
+                    text.setAttribute("dominant-baseline", "central");
                     text.setAttribute("font-family", "system-ui, -apple-system, sans-serif");
                     text.setAttribute("font-size", "8");
                     text.setAttribute("font-weight", "bold");
@@ -713,6 +721,7 @@ export class AnimadorFila {
                 g.setAttribute("transform", `translate(${pt.x}, ${pt.y})`);
 
                 if (novo && animar && fNum === 2) {
+                    g.style.transition = "none";
                     this.animarPercursoFila2(g, dist, pt);
                 }
             }
