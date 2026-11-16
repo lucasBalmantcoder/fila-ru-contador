@@ -134,7 +134,7 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
       filaObj.fila.push(pId);
     } else if (ev.tipo === 'atendimento') {
       filaObj.totalEventos++;
-      const idx = filaObj.fila.indexOf(pId);
+      const idx = filaObj.fila.findIndex(x => String(x) === String(pId));
       if (idx !== -1) {
         filaObj.fila.splice(idx, 1);
       }
@@ -169,7 +169,7 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
       }
     } else if (ev.tipo === 'anulacao') {
       filaObj.totalEventos++;
-      const idx = filaObj.fila.indexOf(pId);
+      const idx = filaObj.fila.findIndex(x => String(x) === String(pId));
       if (idx !== -1) {
         filaObj.fila.splice(idx, 1);
       }
@@ -233,7 +233,7 @@ export function derivarEstado(eventos = [], t = Infinity, configParam = {}) {
         // Reverter o atendimento na fila anterior desfaz a entrada na fila seguinte
         const proxFila = fNum + 1;
         if (filas[proxFila] && filas[proxFila].ativa) {
-          const idxProx = filas[proxFila].fila.indexOf(pId);
+          const idxProx = filas[proxFila].fila.findIndex(x => String(x) === String(pId));
           if (idxProx !== -1) {
             filas[proxFila].fila.splice(idxProx, 1);
             filas[proxFila].contadores.chegadas = Math.max(0, filas[proxFila].contadores.chegadas - 1);

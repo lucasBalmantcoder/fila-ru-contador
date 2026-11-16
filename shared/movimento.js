@@ -429,7 +429,7 @@ export class TimelineAnimada {
       } else if (ev.tipo === 'atendimento') {
         const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
-        const idxFila = filaAtual.indexOf(pId);
+        const idxFila = filaAtual.findIndex(x => String(x) === String(pId));
         if (idxFila !== -1) {
           filaAtual.splice(idxFila, 1);
         }
@@ -440,6 +440,10 @@ export class TimelineAnimada {
         if (ehEncadeadaF1F2) {
           const proxFila = 2;
           const filaDestino = estadoFilas[proxFila];
+          const idxStale = filaDestino.findIndex(x => String(x) === String(pId));
+          if (idxStale !== -1) {
+            filaDestino.splice(idxStale, 1);
+          }
           const slotDestIdx = filaDestino.length;
           filaDestino.push(pId);
           emTransitoEncadeado.add(pId);
@@ -750,7 +754,7 @@ export class TimelineAnimada {
       } else if (ev.tipo === 'anulacao') {
         const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
-        const idxFila = filaAtual.indexOf(pId);
+        const idxFila = filaAtual.findIndex(x => String(x) === String(pId));
         if (idxFila !== -1) {
           filaAtual.splice(idxFila, 1);
         }
@@ -816,6 +820,53 @@ export class TimelineAnimada {
         const pDados = obterOuCriarPessoa(pId, fNum);
         const filaAtual = estadoFilas[fNum];
         filaAtual.unshift(pId);
+
+        // Encadeamento reverso (Fila 1 -> Fila 2 e Fila 2 -> Fila 3):
+        // Reverter a saída na fila anterior remove a pessoa da fila seguinte e avança os de trás
+        const proxFila = fNum + 1;
+        if (estadoFilas[proxFila]) {
+          let idxProx = estadoFilas[proxFila].findIndex(x => String(x) === String(pId));
+          while (idxProx !== -1) {
+            estadoFilas[proxFila].splice(idxProx, 1);
+            const rotaProx = ROTAS[proxFila];
+            for (let j = idxProx; j < estadoFilas[proxFila].length; j++) {
+              const pAtrasId = estadoFilas[proxFila][j];
+              const segAtras = obterOuCriarPessoa(pAtrasId, proxFila);
+              const slotAnt = obterPosicaoSlot(proxFila, j + 1, estadoFilas[proxFila].length + 1);
+              const slotNov = obterPosicaoSlot(proxFila, j, estadoFilas[proxFila].length);
+              adicionarSegmento(segAtras, {
+                t0: tEv,
+                t1: tEv + DUR_AVANCO,
+                tipo: 'rota',
+                fila: proxFila,
+                rota: rotaProx,
+                dist0: slotAnt.distDoInicio,
+                dist1: slotNov.distDoInicio,
+                cor0: CORES[`fila${proxFila}`],
+                cor1: (j === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
+                ehCabeca: (j === 0),
+                opacidade0: 1,
+                opacidade1: 1,
+                escala0: 1,
+                escala1: 1
+              });
+              adicionarSegmento(segAtras, {
+                t0: tEv + DUR_AVANCO,
+                t1: Infinity,
+                tipo: 'parado',
+                fila: proxFila,
+                rota: rotaProx,
+                dist: slotNov.distDoInicio,
+                cor: (j === 0) ? (proxFila === 2 ? CORES.cabecaF2 : CORES.cabecaF3) : CORES[`fila${proxFila}`],
+                ehCabeca: (j === 0),
+                opacidade: 1,
+                escala: 1
+              });
+            }
+            idxProx = estadoFilas[proxFila].findIndex(x => String(x) === String(pId));
+          }
+        }
+        emTransitoEncadeado.delete(pId);
 
         const rotaFila = ROTAS[fNum];
         const slotCabeca = obterPosicaoSlot(fNum, 0, filaAtual.length);

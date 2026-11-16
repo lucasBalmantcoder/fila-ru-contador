@@ -885,6 +885,11 @@ export class AnimadorFila {
                     this.camadaPessoas.appendChild(g);
                 }
 
+                const textEl = g.querySelector("text");
+                if (textEl && textEl.textContent !== String(pNum)) {
+                    textEl.textContent = String(pNum);
+                }
+
                 if (ehCabeca) {
                     g.setAttribute("id", `cabeca_f${fNum}`);
                     g.dataset.esperaMs = fObj?.esperaNaCabecaMs || 0;

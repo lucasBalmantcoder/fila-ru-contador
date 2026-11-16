@@ -575,7 +575,7 @@ assert(opTransf2 && (opTransf2.fila === 2 || opTransf2.deFila === 2), 'Diff cont
 gsMulti.processarComando({ acao: 'saida', fila: 3, pessoaEsperada: 1, clientEventId: 'pipe_f3_s1' }, disp2);
 
 // Métricas de percurso completo F1 -> F2 -> F3
-const metPipe = calcularMetricas(gsMulti.sessaoAtiva.eventos, gsMulti.sessaoAtiva.config, Date.now());
+const metPipe = calcularMetricas(gsMulti.sessaoAtiva.eventos, gsMulti.sessaoAtiva.config, Math.max(Date.now(), gsMulti.sessaoAtiva.eventos[gsMulti.sessaoAtiva.eventos.length - 1]?.t || 0));
 assert(metPipe.transitoMesas && metPipe.transitoMesas.count === 1, 'Calculou transitoMesas (F1 -> F2)');
 assert(metPipe.tempoMesasAteSaida && metPipe.tempoMesasAteSaida.qtd === 1, 'Calculou tempoMesasAteSaida (F2 -> F3)');
 assert(metPipe.transitoSaida && metPipe.transitoSaida.count === 1, 'Calculou transitoSaida completo (F1 -> F2 -> F3)');
@@ -715,6 +715,75 @@ motor.aplicarSnapshot(estComMesas);
 const renderMotor = motor.obterDadosRenderizacao();
 const blocosF3Motor = renderMotor.blocos.filter(b => b.fila === 3);
 assert(blocosF3Motor.length === 0, 'MotorMovimento não gera blocos na Fila 3 enquanto alunos comem');
+
+/* --------------------------------------------------------------------------
+   27. Teste: Cabeça da Fila 2 Avança Dinamicamente e Nunca Fica Presa na Pessoa 1
+   -------------------------------------------------------------------------- */
+console.log('\n--- 27. Cabeça da Fila 2 com Reversões e Avanço Dinâmico ---');
+
+// Cenário crítico:
+// 1. Pessoa 1 e 2 chegam na F1
+// 2. Pessoa 1 atende na F1 (vai para F2)
+// 3. Reversão na F1 puxa Pessoa 1 de volta para a F1 (desfaz F2)
+// 4. Pessoa 1 e 2 atendem na F1 (entram na F2: F2 = [1, 2])
+// 5. Pessoa 1 atende na F2 (entra nas mesas: F2 = [2])
+// 6. Cabeça da Fila 2 deve ser Pessoa 2 com destaque rosa (#ec4899), sem bloco 1 fantasma preso na ponta
+const evsTesteF2Cabeca = [
+  { seq: 1, t: 1000, tipo: 'sessao_iniciada', config: { config: { filasAtivas: [1, 2, 3] } } },
+  { seq: 2, t: 1000, tipo: 'chegada', fila: 1, pessoa: 1 },
+  { seq: 3, t: 1200, tipo: 'chegada', fila: 1, pessoa: 2 },
+  { seq: 4, t: 1400, tipo: 'chegada', fila: 1, pessoa: 3 },
+  // Pessoa 1 atende na F1
+  { seq: 5, t: 3000, tipo: 'atendimento', fila: 1, pessoa: 1 },
+  { seq: 6, t: 3000, tipo: 'chegada', fila: 2, pessoa: 1, encadeado: true },
+  // Operador da F1 reverte o atendimento da Pessoa 1
+  { seq: 7, t: 4000, tipo: 'reversao', fila: 1, pessoa: 1 },
+  // Pessoa 1 é atendida novamente na F1
+  { seq: 8, t: 5000, tipo: 'atendimento', fila: 1, pessoa: 1 },
+  { seq: 9, t: 5000, tipo: 'chegada', fila: 2, pessoa: 1, encadeado: true },
+  // Pessoa 2 é atendida na F1
+  { seq: 10, t: 6000, tipo: 'atendimento', fila: 1, pessoa: 2 },
+  { seq: 11, t: 6000, tipo: 'chegada', fila: 2, pessoa: 2, encadeado: true },
+  // Pessoa 3 é atendida na F1
+  { seq: 12, t: 7000, tipo: 'atendimento', fila: 1, pessoa: 3 },
+  { seq: 13, t: 7000, tipo: 'chegada', fila: 2, pessoa: 3, encadeado: true },
+  // Pessoa 1 é atendida na Fila 2 (vai para as mesas)
+  { seq: 14, t: 10000, tipo: 'atendimento', fila: 2, pessoa: 1 },
+  { seq: 15, t: 10000, tipo: 'chegada', fila: 3, pessoa: 1, encadeado: true },
+  // Pessoa 2 é atendida na Fila 2 (vai para as mesas)
+  { seq: 16, t: 15000, tipo: 'atendimento', fila: 2, pessoa: 2 },
+  { seq: 17, t: 15000, tipo: 'chegada', fila: 3, pessoa: 2, encadeado: true }
+];
+
+const timelineF2 = new TimelineAnimada(evsTesteF2Cabeca, { filasAtivas: [1, 2, 3] });
+
+// Teste em t = 12000: Pessoa 1 está nas mesas, F2 deve ter [2, 3] e a cabeça deve ser Pessoa 2
+const estT12k = derivarEstado(evsTesteF2Cabeca, 12000, { filasAtivas: [1, 2, 3] });
+assert(estT12k.filas[2].fila[0] === 2, 'Estado derivado em t=12000 tem Pessoa 2 na cabeça da Fila 2');
+
+const animT12k = timelineF2.obterEstado(12000, estT12k);
+const blocosF2T12k = animT12k.blocos.filter(b => b.fila === 2 && b.opacidade > 0.5);
+assert(blocosF2T12k.length === 2, 'Fila 2 animada tem exatamente 2 blocos em t=12000');
+
+const cabecaT12k = blocosF2T12k.find(b => b.ehCabeca);
+assert(cabecaT12k !== undefined, 'Existe bloco marcado como cabeça da Fila 2');
+assert(cabecaT12k.pessoa === 2, `Cabeça da Fila 2 exibe o número atual (Pessoa 2) e NÃO o fantasma da Pessoa 1 (encontrado: ${cabecaT12k?.pessoa})`);
+assert(cabecaT12k.cor === '#ec4899', `Cabeça da Fila 2 destacada com rosa (#ec4899) (cor: ${cabecaT12k.cor})`);
+
+// Não deve haver nenhum bloco com pessoa 1 na Fila 2
+const bloco1FantasmaF2 = blocosF2T12k.find(b => b.pessoa === 1);
+assert(bloco1FantasmaF2 === undefined, 'Nenhum bloco da Pessoa 1 permaneceu retido na Fila 2 após sua saída');
+
+// Teste em t = 17000: Pessoa 2 também foi para as mesas, F2 deve ter [3] e a cabeça deve ser Pessoa 3
+const estT17k = derivarEstado(evsTesteF2Cabeca, 17000, { filasAtivas: [1, 2, 3] });
+const animT17k = timelineF2.obterEstado(17000, estT17k);
+const blocosF2T17k = animT17k.blocos.filter(b => b.fila === 2 && b.opacidade > 0.5);
+assert(blocosF2T17k.length === 1, 'Fila 2 animada tem exatamente 1 bloco em t=17000');
+
+const cabecaT17k = blocosF2T17k[0];
+assert(cabecaT17k.pessoa === 3, `Cabeça da Fila 2 avançou para Pessoa 3 (encontrado: ${cabecaT17k?.pessoa})`);
+assert(cabecaT17k.ehCabeca === true, 'Pessoa 3 é a cabeça da Fila 2');
+assert(cabecaT17k.cor === '#ec4899', 'Pessoa 3 recebe a cor rosa da cabeça (#ec4899)');
 
 try {
   fs.rmSync(dirTempTeste, { recursive: true, force: true });
