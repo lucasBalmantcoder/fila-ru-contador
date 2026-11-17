@@ -635,13 +635,11 @@ export class TimelineAnimada {
               x0: 192,
               y0: 258, // Base da caixa Mesas
               x1: 192,
-              y1: CAIXAS.saida.cy, // Centro da caixa Saída (505)
-              cor: CORES.cabecaF3,
+              y1: CAIXAS.saida.y, // Topo da caixa Saída (462) - toca na caixa ao concluir o percurso
+              cor: CORES.fila3, // Rosa padrão da Fila 3
               ehCabeca: false,
-              opacidade0: 1,
-              opacidade1: 0,
-              escala0: 1,
-              escala1: 0.8
+              opacidade: 1, // Permanece 100% opaco durante todo o percurso (não fica transparente)
+              escala: 1
             });
           } else {
             // Sem saída registrada: continua sentado nas mesas até o fim da sessão

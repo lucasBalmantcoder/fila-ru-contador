@@ -641,7 +641,7 @@ export class AnimadorFila {
                 g.dataset.fila = "3";
 
                 const ptInicio = { x: 192, y: 258, w: 24, h: 10 };
-                const ptFim = { x: 192, y: 505 };
+                const ptFim = { x: 192, y: 462 }; // Topo da caixa Saída (toca na caixa ao concluir o percurso)
 
                 g.style.transition = "none";
                 g.setAttribute("transform", `translate(${ptInicio.x}, ${ptInicio.y})`);
@@ -653,7 +653,7 @@ export class AnimadorFila {
                 rect.setAttribute("width", ptInicio.w);
                 rect.setAttribute("height", ptInicio.h);
                 rect.setAttribute("rx", "1.5");
-                rect.setAttribute("fill", CORES.cabecaF3 || "#f97316");
+                rect.setAttribute("fill", CORES.fila3 || "#ec4899");
                 g.appendChild(rect);
 
                 const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
@@ -670,17 +670,18 @@ export class AnimadorFila {
 
                 this.camadaPessoas.appendChild(g);
 
-                // No frame seguinte, inicia deslocamento contínuo até a saída
+                // No frame seguinte, inicia deslocamento contínuo até a saída mantendo 100% de opacidade
                 requestAnimationFrame(() => {
-                    g.style.transition = "transform 1.3s cubic-bezier(0.2, 0.8, 0.2, 1), opacity 1.3s ease";
+                    g.style.transition = "transform 1.4s cubic-bezier(0.2, 0.8, 0.2, 1)";
                     g.setAttribute("transform", `translate(${ptFim.x}, ${ptFim.y})`);
-                    g.style.opacity = "0";
+                    g.style.opacity = "1";
 
                     setTimeout(() => {
+                        // Some apenas ao tocar no bloco de saída
                         if (g && g.parentNode) {
                             g.remove();
                         }
-                    }, 1350);
+                    }, 1400);
                 });
             } catch (err) {
                 console.warn("Aviso na animação de saída das mesas:", err);

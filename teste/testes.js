@@ -692,7 +692,9 @@ const estadoT30k500 = timeline.obterEstado(30500);
 const bloco1Saindo = estadoT30k500.blocos.find(b => b.pessoa === 1);
 assert(bloco1Saindo !== undefined, 'Pessoa 1 emerge das mesas e está visível a caminho da saída');
 assert(bloco1Saindo.x === 192, 'Pessoa 1 segue a rota vertical de saída (x = 192)');
-assert(bloco1Saindo.y > 258 && bloco1Saindo.y < 505, 'Pessoa 1 está em trânsito contínuo entre Mesas (y=258) e Saída (y=505)');
+assert(bloco1Saindo.y > 258 && bloco1Saindo.y <= 462, 'Pessoa 1 está em trânsito contínuo entre Mesas (y=258) e Saída (y=462)');
+assert(bloco1Saindo.opacidade === 1, 'Pessoa 1 permanece 100% opaca durante o percurso até a saída (não fica transparente)');
+assert(bloco1Saindo.cor === '#ec4899', 'Bloco de saída possui a cor rosa da Fila 3 (#ec4899)');
 
 // 3. Verificação de anti-colisão / escalonamento seguro para saídas simultâneas
 const estadoT30k800 = timeline.obterEstado(30800);
