@@ -1,209 +1,253 @@
 # Métricas do Sistema Fila RU
 
-Documento de referência de **todas as métricas calculadas ao final de cada coleta**. Cada métrica possui um ID estável (`M-xx`), usado também no código (`shared/metricas.js`, registro `METRICAS`) e nos testes. Este documento é a fonte de verdade: qualquer métrica nova ou alterada deve ser atualizada aqui.
+Documento de referência de **todas as métricas calculadas ao final de cada coleta e durante o monitoramento em tempo real**. Cada métrica possui um ID estável (`M-xx`), usado como contrato de especificação no código (`shared/metricas.js`, `shared/estado.js`) e na suíte de testes automatizados (`teste/testes.js`). Este documento é a fonte de verdade do projeto: qualquer métrica nova ou alterada deve ser formalmente registrada aqui.
 
-Versão do documento: 1.0 (03/11/2026)
+**Versão do documento:** 2.0 (17/11/2026)  
+**Principais novidades da v2.0:**
 
----
-
-## 1. Convenções
-
-| Termo | Definição |
-|---|---|
-| **Sessão** | Uma coleta, do início (`sessao_iniciada`) ao fim (`sessao_encerrada`). |
-| **Fila 1** | Entrada → catraca (vermelha). |
-| **Fila 2** | Catraca → mesas, passando pelo Atendimento (verde). |
-| **Fila 3** | Mesas → saída do restaurante (rosa). Mede a permanência desde a chegada às mesas. |
-| **Entrada / Saída** | Evento que coloca a pessoa na fila / evento que a retira da fila (confirmado por um celular). |
-| **Encadeamento** | A saída de uma fila cria a entrada da seguinte (`1>2`, `2>3`), com a mesma pessoa e o mesmo horário. |
-| **Evento efetivo** | Evento não anulado, não revertido e que não seja de ajuste de fila. |
-| **T** | Duração observada da fila: do início da sessão (ou da ativação da fila) até o fim da sessão (ou da desativação da fila). |
-| **n_e, n_s** | Número de entradas e de saídas efetivas da fila. |
-| **c** | Número de servidores da fila (catracas ou pontos de serviço), configurado na sessão (padrão 1). |
-| **Bloco** | Janela de tempo para séries e tabelas (padrão 5 min, configurável). |
-| **Limiar de pausa (P)** | Intervalo sem saídas a partir do qual há "pausa longa" (padrão 60 s, configurável). |
-
-Unidades: tempos em segundos (exibidos como `mm:ss` ou `hh:mm:ss`); taxas em pessoas por minuto. Desvio padrão amostral (n − 1). Percentis por interpolação linear.
-
-Todas as métricas desta seção 2 são calculadas **por fila ativa**. Uma fila ativa sem nenhum evento é marcada como **"sem dados"**, sem métricas zeradas.
+- Modelagem da capacidade e dinâmica das **Mesas do RU (216 cadeiras)** com métricas em tempo real e consolidadas de sessão.
+- Nova lógica da **Fila 3 / Saída**: fluxo contínuo sem formação de fila de espera estática acumulada no corredor.
+- Métricas de **trânsito em encadeamentos parciais e totais** (F1 → F2, F2 → F3 e F1 → F2 → F3) com resumos executivos (`transitoMesas`, `transitoSaida`).
 
 ---
 
-## 2. Métricas por fila
+## 1. Convenções e Terminologia
+
+| Termo                          | Definição                                                                                                                                                                                                                                              |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Sessão**                     | Uma coleta de dados, delimitada do início (`sessao_iniciada`) ao fim (`sessao_encerrada`).                                                                                                                                                             |
+| **Fila 1**                     | Entrada → Catraca (vermelha). Mede a espera dos alunos para acesso à catraca.                                                                                                                                                                          |
+| **Fila 2**                     | Catraca → Mesas, contornando a caixa de Atendimento (verde). Mede a espera para pegar a bandeja e se servir.                                                                                                                                           |
+| **Salão & Mesas**              | Área de refeição entre a Fila 2 e a Saída. Capacidade nominal de **216 cadeiras**, distribuídas em **4 fileiras com 9 mesas cada (36 mesas no total)**, sendo **6 cadeiras por mesa**.                                                                 |
+| **Fila 3 / Saída**             | Mesas → Saída física do restaurante (rosa). Quando encadeada com a Fila 2, **não forma fila de espera estática acumulada no corredor**; representa o fluxo dinâmico e contínuo de alunos que concluíram a refeição e se deslocam até a porta de saída. |
+| **Cadeiras Ocupadas / Livres** | Quantidade instantânea e média de assentos ocupados por alunos comendo e disponíveis no salão.                                                                                                                                                         |
+| **Status de Ocupação**         | Classificação qualitativa da lotação do salão: _Tranquilo_ (< 50%), _Moderado_ (50% a 74%), _Quase Cheio_ (75% a 89%) e _Lotado_ (≥ 90%).                                                                                                              |
+| **Entrada / Saída**            | Evento que insere a pessoa na fila / evento que a retira da fila (confirmado pelo operador via celular).                                                                                                                                               |
+| **Encadeamento Atômico**       | A saída de uma fila gera automaticamente a entrada na fila seguinte (`1>2` na catraca, `2>3` ao sentar nas mesas), mantendo a mesma numeração da pessoa e o mesmo timestamp.                                                                           |
+| **Evento Efetivo**             | Evento não anulado, não revertido e que não seja classificado como ajuste de fila.                                                                                                                                                                     |
+| **T**                          | Duração observada da fila: do início da sessão (ou ativação da fila) até o fim da sessão (ou desativação da fila).                                                                                                                                     |
+| **n_e, n_s**                   | Número de entradas e saídas efetivas da respectiva fila.                                                                                                                                                                                               |
+| **c**                          | Número de servidores da fila (catracas ou postos de atendimento), configurado na sessão (padrão 1).                                                                                                                                                    |
+| **Bloco**                      | Janela temporal discreta para gráficos de série histórica e tabelas analíticas (padrão 5 min, configurável).                                                                                                                                           |
+| **Limiar de Pausa (P)**        | Intervalo consecutivo sem saídas a partir do qual se diagnostica "pausa longa" (padrão 60 s, configurável).                                                                                                                                            |
+| **Tempo de Refeição Padrão**   | Duração estimada da refeição (padrão 20 min), utilizada para liberação assíncrona de cadeiras quando a Fila 3 não é monitorada.                                                                                                                        |
+
+**Unidades padrão:** tempos em segundos (`s`, exibidos como `mm:ss` ou `hh:mm:ss`); taxas em pessoas por minuto (`pessoas/min`). Desvio padrão amostral ($n - 1$). Percentis calculados por interpolação linear ponderada.
+
+Todas as métricas da Seção 2 são calculadas **por fila ativa**. Uma fila ativa que não registrou eventos é reportada com a flag **"sem dados"**, sem zerar artificialmente suas taxas.
+
+---
+
+## 2. Métricas por Fila
 
 ### 2.1 Contagens e tempos de referência
 
-| ID | Métrica | Definição | Unidade |
-|---|---|---|---|
-| M-01 | Entradas (n_e) | Pessoas que entraram na fila (efetivas). | pessoas |
-| M-02 | Saídas (n_s) | Pessoas que saíram da fila (efetivas). | pessoas |
-| M-03 | Anuladas | Pessoas removidas da fila por anulação. | pessoas |
-| M-04 | Revertidas | Atendimentos desfeitos por reversão. | eventos |
-| M-05 | Ajustes | Entradas e saídas geradas por "Ajustar fila". Reportadas à parte e excluídas de M-10 a M-38. | eventos |
-| M-06 | Pessoas na fila ao encerrar | Pessoas presentes na fila no fim da coleta (considera anulações e ajustes). | pessoas |
-| M-07 | Duração observada (T) | Tempo em que a fila esteve ativa na sessão. | s |
-| M-08 | Tempo até a primeira saída | `t_primeira_saída − início`. | s |
-| M-09 | Tempo após a última saída | `fim − t_última_saída`. | s |
+| ID   | Métrica                     | Definição                                                                                                                     | Unidade |
+| ---- | --------------------------- | ----------------------------------------------------------------------------------------------------------------------------- | ------- |
+| M-01 | Entradas ($n_e$)            | Pessoas que entraram na fila (efetivas).                                                                                      | pessoas |
+| M-02 | Saídas ($n_s$)              | Pessoas que saíram da fila (efetivas).                                                                                        | pessoas |
+| M-03 | Anuladas                    | Pessoas removidas da fila por anulação de toque pelo operador.                                                                | pessoas |
+| M-04 | Revertidas                  | Atendimentos desfeitos por reversão de toque pelo operador.                                                                   | eventos |
+| M-05 | Ajustes                     | Entradas e saídas geradas pela ferramenta "Ajustar fila". Reportadas separadamente e excluídas do cálculo de tempos e vazões. | eventos |
+| M-06 | Pessoas na fila ao encerrar | Pessoas presentes na fila no instante de encerramento da coleta.                                                              | pessoas |
+| M-07 | Duração observada ($T$)     | Tempo total em que a fila permaneceu ativa durante a sessão.                                                                  | s       |
+| M-08 | Tempo até a primeira saída  | $t_{\text{primeira\_saída}} - t_{\text{início}}$.                                                                             | s       |
+| M-09 | Tempo após a última saída   | $t_{\text{fim}} - t_{\text{última\_saída}}$.                                                                                  | s       |
 
 ### 2.2 Taxas e vazão
 
-| ID | Métrica | Fórmula / definição | Unidade |
-|---|---|---|---|
-| M-10 | Taxa de entrada (λ) | `n_e / T` | pessoas/min |
-| M-11 | Vazão global | `n_s / T` | pessoas/min |
-| M-12 | Vazão em operação | `(n_s − 1) / (t_última_saída − t_primeira_saída)` | pessoas/min |
-| M-13 | Taxa de serviço efetiva (μ agregada) | `1 / média dos intervalos entre saídas (M-30)`. Inclui períodos ociosos. | pessoas/min |
-| M-14 | Taxa de serviço em ocupação (μ ocupada) | `1 / média dos intervalos entre saídas consecutivas em que a fila esteve não vazia entre as duas`. Mede a capacidade real do serviço. | pessoas/min |
-| M-15 | Taxa de serviço por servidor (μ_c) | `μ ocupada / c` (usa M-13 se não houver intervalos em ocupação). | pessoas/min |
-| M-16 | Utilização (ρ) | `λ / (c · μ_c)` | — |
-| M-17 | Saídas por bloco | Série: número de saídas em cada bloco. | pessoas |
-| M-18 | Entradas por bloco | Série: número de entradas em cada bloco. | pessoas |
-| M-19 | Resumo por bloco | Média, valor de pico (e o bloco em que ocorreu) e mínimo de M-17. | pessoas |
+| ID   | Métrica                                     | Fórmula / Definição                                                                                                               | Unidade     |
+| ---- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| M-10 | Taxa de entrada ($\lambda$)                 | $n_e / T$                                                                                                                         | pessoas/min |
+| M-11 | Vazão global                                | $n_s / T$                                                                                                                         | pessoas/min |
+| M-12 | Vazão em operação                           | $(n_s - 1) / (t_{\text{última\_saída}} - t_{\text{primeira\_saída}})$                                                             | pessoas/min |
+| M-13 | Taxa de serviço efetiva ($\mu$ agregada)    | $1 / \text{média dos intervalos entre saídas (M-30)}$. Inclui períodos de ociosidade.                                             | pessoas/min |
+| M-14 | Taxa de serviço em ocupação ($\mu$ ocupada) | $1 / \text{média dos intervalos entre saídas em que a fila esteve não vazia}$. Mede a capacidade técnica do posto de atendimento. | pessoas/min |
+| M-15 | Taxa de serviço por servidor ($\mu_c$)      | $\mu_{\text{ocupada}} / c$ (recorre a M-13 se não houver intervalos não vazios).                                                  | pessoas/min |
+| M-16 | Fator de utilização ($\rho$)                | $\lambda / (c \cdot \mu_c)$                                                                                                       | —           |
+| M-17 | Saídas por bloco                            | Série temporal com o número de saídas em cada janela de tempo.                                                                    | pessoas     |
+| M-18 | Entradas por bloco                          | Série temporal com o número de entradas em cada janela de tempo.                                                                  | pessoas     |
+| M-19 | Resumo por bloco                            | Média, valor de pico (e índice do bloco correspondente) e mínimo da série M-17.                                                   | pessoas     |
 
 ### 2.3 Tempo na fila (por pessoa)
 
-Para cada pessoa com entrada e saída efetivas: `tempo_na_fila = t_saída − t_entrada`. Na fila 2 e na fila 3 é o tempo na respectiva fila. **Fila 3:** é a permanência desde a chegada às mesas até a saída do restaurante; os valores individuais são **estimados (ordem FIFO assumida)**, exceto a média (M-20), que é exata.
+Para cada pessoa atendida com entrada e saída efetivas: $\text{tempo\_na\_fila} = t_{\text{saída}} - t_{\text{entrada}}$.  
+_Nas Filas 1 e 2:_ tempo de espera físico no alinhamento da fila.  
+_Na Fila 3:_ tempo decorrido desde a chegada às mesas até a passagem pela saída. A média (M-20) é exata independentemente da ordem; as medidas de dispersão individuais presumem aproximação FIFO.
 
-| ID | Métrica | Observação |
-|---|---|---|
-| M-20 | Média | Exata em qualquer fila. |
-| M-21 | Mediana | Fila 3: estimada. |
-| M-22 | Desvio padrão | Fila 3: estimado. |
-| M-23 | Mínimo | Fila 3: estimado. |
-| M-24 | Máximo | Fila 3: estimado. |
-| M-25 | Percentil 90 | Fila 3: estimado. |
-| M-26 | Percentil 95 | Fila 3: estimado. |
-| M-27 | Pessoas sem saída ao final | Quantidade e tempo parcial médio até o fim da coleta (informativo, não entra em M-20 a M-26). |
+| ID   | Métrica                    | Observação                                                                                         |
+| ---- | -------------------------- | -------------------------------------------------------------------------------------------------- |
+| M-20 | Média de espera ($W_q$)    | Média aritmética exata dos tempos de espera.                                                       |
+| M-21 | Mediana de espera          | Valor central da amostra de tempos de espera.                                                      |
+| M-22 | Desvio padrão              | Dispersão amostral dos tempos de espera.                                                           |
+| M-23 | Mínimo                     | Menor tempo individual de espera registrado.                                                       |
+| M-24 | Máximo                     | Maior tempo individual de espera registrado.                                                       |
+| M-25 | Percentil 90 (P90)         | 90% dos alunos esperaram menos ou igual a este valor.                                              |
+| M-26 | Percentil 95 (P95)         | 95% dos alunos esperaram menos ou igual a este valor.                                              |
+| M-27 | Pessoas sem saída ao final | Quantidade e tempo parcial acumulado até o término da coleta (informativo, não polui M-20 a M-26). |
 
-### 2.4 Intervalos
+### 2.4 Intervalos entre eventos
 
-| ID | Métrica | Definição |
-|---|---|---|
-| M-30 | Intervalo entre saídas: média | Média de `t_saída(k+1) − t_saída(k)`. |
-| M-31 | Intervalo entre saídas: mediana | |
-| M-32 | Intervalo entre saídas: desvio padrão | |
-| M-33 | Intervalo entre saídas: coeficiente de variação | `desvio padrão / média`. Referência: 1 em processo de Poisson. |
-| M-34 | Intervalo entre saídas: mínimo | |
-| M-35 | Intervalo entre saídas: máximo | Maior pausa entre saídas. |
-| M-36 | Intervalo entre saídas: percentil 90 | |
-| M-37 | Intervalo entre saídas: percentil 95 | |
-| M-38 | Intervalo entre entradas | Mesmo conjunto de estatísticas (média, mediana, desvio padrão, CV, mínimo, máximo, P90, P95), aplicado às entradas. |
+| ID   | Métrica                                   | Definição                                                                                                                         |
+| ---- | ----------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
+| M-30 | Intervalo entre saídas: média             | Média de $t_{\text{saída}}(k+1) - t_{\text{saída}}(k)$.                                                                           |
+| M-31 | Intervalo entre saídas: mediana           | Mediana dos intervalos consecutivos entre saídas.                                                                                 |
+| M-32 | Intervalo entre saídas: desvio padrão     | Dispersão dos intervalos entre saídas.                                                                                            |
+| M-33 | Coeficiente de variação das saídas ($CV$) | $\text{desvio padrão} / \text{média}$. (Referência teórica: 1,0 em processo de Poisson).                                          |
+| M-34 | Intervalo entre saídas: mínimo            | Menor tempo registrado entre dois atendimentos seguidos.                                                                          |
+| M-35 | Intervalo entre saídas: máximo            | Maior tempo registrado entre dois atendimentos seguidos (maior pausa entre clientes).                                             |
+| M-36 | Intervalo entre saídas: P90               | 90% dos intervalos entre saídas foram inferiores a este valor.                                                                    |
+| M-37 | Intervalo entre saídas: P95               | 95% dos intervalos entre saídas foram inferiores a este valor.                                                                    |
+| M-38 | Intervalos entre entradas                 | Conjunto idêntico de estatísticas (média, mediana, desvio padrão, CV, mín, máx, P90, P95) aplicado aos intervalos entre chegadas. |
 
 ### 2.5 Comprimento da fila
 
-| ID | Métrica | Fórmula / definição | Unidade |
-|---|---|---|---|
-| M-40 | Comprimento médio (L) | `(1/T) · ∫ n(t) dt`, em que `n(t)` é o número de pessoas na fila em cada instante (média ponderada pelo tempo). | pessoas |
-| M-41 | Comprimento máximo | Maior valor de `n(t)` e o instante em que ocorreu. | pessoas |
-| M-42 | Tempo com a fila vazia | Tempo e percentual de T com `n(t) = 0`. | s e % |
-| M-43 | Série do comprimento | `n(t)` ao longo do tempo (gráfico, com as três filas na mesma escala). | pessoas |
+| ID   | Métrica                       | Fórmula / Definição                                                                                                     | Unidade |
+| ---- | ----------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------- |
+| M-40 | Comprimento médio ($L_q$)     | $(1/T) \cdot \int_0^T n(t) \, dt$, sendo $n(t)$ o número de pessoas na fila no instante $t$ (média ponderada no tempo). | pessoas |
+| M-41 | Comprimento máximo            | Maior valor observado de $n(t)$ e o instante temporal exato do pico.                                                    | pessoas |
+| M-42 | Tempo com a fila vazia        | Tempo total e fração percentual de $T$ em que $n(t) = 0$.                                                               | s e %   |
+| M-43 | Série temporal do comprimento | Curva contínua de $n(t)$ ao longo da sessão para gráficos comparativos sincronizados.                                   | pessoas |
+
+_Nota sobre a Fila 3:_ Com a modelagem contínua das mesas, a Fila 3 não acumula fila estática no corredor ($L_q \approx 0$ em fluxo regular), refletindo apenas blocos em trânsito instantâneo até a saída.
 
 ### 2.5.1 Ociosidade e demanda
 
-Classificação do tempo da fila em quatro categorias que não se sobrepõem: **serviço em operação**, **serviço parado**, **sem demanda** e **sem cobertura**.
+Classificação temporal mutuamente exclusiva do tempo de operação em quatro regimes:
 
-| ID | Métrica | Definição |
-|---|---|---|
-| M-50 | Pausas de serviço parado | Número de intervalos sem saída maiores que P **com a fila não vazia**. |
-| M-51 | Tempo de serviço parado | Tempo total e percentual de T nessas pausas. |
-| M-52 | Maior pausa com fila não vazia | Duração e horário. |
-| M-53 | Tempo sem demanda | Tempo e percentual de T com a fila vazia (M-42, excluindo períodos sem cobertura). |
-| M-54 | Tempo sem cobertura | Tempo e percentual de T em que nenhum aparelho coletava a fila (ver M-90). Nunca entra em M-50 a M-53. |
+| ID   | Métrica                        | Definição                                                                                          |
+| ---- | ------------------------------ | -------------------------------------------------------------------------------------------------- |
+| M-50 | Pausas de serviço parado       | Quantidade de pausas sem saída superiores ao limiar $P$ ocorridas **com a fila não vazia**.        |
+| M-51 | Tempo de serviço parado        | Duração somada e fração percentual de $T$ em que o atendimento parou havendo alunos esperando.     |
+| M-52 | Maior pausa com fila não vazia | Duração e horário exato de início da maior pausa de atendimento com fila acumulada.                |
+| M-53 | Tempo sem demanda              | Duração e percentual de $T$ com a fila vazia (M-42, descontando eventuais períodos sem cobertura). |
+| M-54 | Tempo sem cobertura            | Duração e percentual de $T$ em que nenhum coletor estava conectado e cobrindo a fila.              |
 
-### 2.6 Lei de Little e modelo teórico
+### 2.6 Verificação teórica e Lei de Little
 
-| ID | Métrica | Fórmula / definição |
-|---|---|---|
-| M-60 | Verificação da Lei de Little | Compara `L` (M-40) com `λ · W` (M-10 × M-20) e informa a diferença percentual. Diferenças grandes indicam regime não estável, truncamento ou lacunas de coleta. |
-| M-61 | Modelo teórico M/M/c (referência) | Calculado somente se `ρ < 1`: probabilidade de espera (Erlang C), `Lq`, `Wq`, `W` e `L` teóricos, comparados aos observados. Premissas: chegadas de Poisson, serviço exponencial, `c` servidores idênticos, disciplina FIFO. Apenas indicativo. |
-
----
-
-## 3. Tabela por bloco de tempo
-
-Para cada fila ativa e cada bloco, cobrindo toda a duração em que a fila esteve ativa (inclusive blocos sem passagem, destacados).
-
-| ID | Coluna | Definição |
-|---|---|---|
-| M-70 | Início–fim | Limites do bloco (o último pode ser parcial). |
-| M-71 | Entradas | Entradas efetivas no bloco (igual a M-18). |
-| M-72 | Saídas | Saídas efetivas no bloco (igual a M-17). |
-| M-73 | Comprimento médio | Média ponderada pelo tempo de `n(t)` dentro do bloco. |
-| M-74 | Cobertura (%) | Percentual do bloco com ao menos um aparelho coletando a fila. |
-| M-75 | Pausas longas no bloco | Número de pausas de serviço parado (M-50) iniciadas no bloco. |
+| ID   | Métrica                         | Fórmula / Definição                                                                                                                                                                          |
+| ---- | ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------- | ------------------------------------------------------------- |
+| M-60 | Verificação da Lei de Little    | Confronta $L_q$ observado (M-40) com o produto $\lambda \cdot W_q$ (M-10 $\times$ M-20). Informa a divergência percentual $                                                                  | \Delta \% | $. Valores $\le 20\%$ atestam consistência de regime estável. |
+| M-61 | Modelo Teórico M/M/c (Erlang C) | Calculado para $\rho < 1$: Probabilidade de espera $P_{\text{espera}}$, $P_0$, $L_q$, $W_q$, $L$ e $W$ teóricos derivados da teoria de filas clássica para benchmarking com a operação real. |
 
 ---
 
-## 4. Métricas combinadas (filas encadeadas)
+## 3. Tabela Analítica por Bloco de Tempo
 
-Disponíveis somente quando as filas envolvidas estão ativas e encadeadas na sessão.
-
-| ID | Métrica | Definição | Condição |
-|---|---|---|---|
-| M-80 | Tempo total até as mesas | Por pessoa, `tempo na fila 1 + tempo na fila 2`. Média, mediana, desvio padrão, mínimo, máximo, P90 e P95. | Filas 1 e 2 |
-| M-81 | Tempo total no restaurante | Por pessoa, da entrada na fila 1 à saída da fila 3. Média exata; demais estatísticas estimadas (ordem FIFO na fila 3). | Filas 1, 2 e 3 |
-| M-82 | Participação de cada fila no tempo total | `tempo médio da fila / soma dos tempos médios`, em %. | Duas ou mais filas |
-| M-83 | Ranking de gargalo | Filas ordenadas por tempo médio (M-20) e por comprimento médio (M-40), com a fila de maior valor destacada. Indicativo. | Duas ou mais filas |
-| M-84 | Pessoas no sistema | Série e máximo da soma das pessoas presentes nas filas ao longo do tempo. | Duas ou mais filas |
-| M-85 | Balanço de consistência | Verifica `entradas − saídas − anuladas = presentes` em cada fila e no encadeamento. Divergência é sinalizada como alerta de qualidade. | Todas |
+| ID   | Coluna / Campo         | Definição                                                                         |
+| ---- | ---------------------- | --------------------------------------------------------------------------------- |
+| M-70 | Início – Fim           | Intervalo temporal da janela discreta (ex: 00:00 - 05:00).                        |
+| M-71 | Entradas no bloco      | Total de entradas efetivas na janela (corresponde a M-18).                        |
+| M-72 | Saídas no bloco        | Total de saídas efetivas na janela (corresponde a M-17).                          |
+| M-73 | Comprimento médio      | Média ponderada no tempo de $n(t)$ no intervalo do bloco.                         |
+| M-74 | Cobertura do bloco (%) | Percentual da duração do bloco em que havia aparelho coletando a fila ativamente. |
+| M-75 | Pausas longas no bloco | Quantidade de pausas com fila acumulada iniciadas dentro da janela.               |
 
 ---
 
-## 5. Cobertura e qualidade dos dados
+## 4. Métricas Combinadas e Encadeamentos Multi-Filas
 
-| ID | Métrica | Definição |
-|---|---|---|
-| M-90 | Cobertura por fila | Percentual de T em que havia ao menos um aparelho conectado e atribuído à fila. |
-| M-91 | Lacunas de cobertura | Lista de períodos sem cobertura (início, fim, duração). |
-| M-92 | Pessoas afetadas por lacuna | Pessoas cujo intervalo entre entrada e saída atravessa uma lacuna. Excluídas das estatísticas de tempo quando a opção "Excluir períodos sem cobertura" estiver ligada; nesse caso, as taxas (M-10 a M-12) usam apenas o tempo coberto. |
-| M-93 | Eventos tardios | Eventos enviados após reconexão (com `tardio: true`). |
-| M-94 | Comandos rejeitados | Contagem por código (`FILA_VAZIA`, `CABECA_MUDOU`, `JA_ATENDIDO`, `FILA_INATIVA` etc.), fila e aparelho. |
-| M-95 | Anulações, reversões e ajustes | Quantidade por fila e por aparelho. |
-| M-96 | Desconexões por aparelho | Número, horário e duração. |
-| M-97 | Eventos por aparelho | Quantidade de eventos registrados por cada aparelho e por fila. |
-| M-98 | Aparelhos por fila | Aparelhos atribuídos a cada fila ao longo da sessão (trocas de área e modo apoio). |
+Métricas calculadas dinamicamente quando as filas componentes encontram-se ativas e encadeadas atomicamente.
 
----
-
-## 6. Comparação entre sessões
-
-| ID | Métrica | Definição |
-|---|---|---|
-| M-100 | Comparação lado a lado | Principais métricas (M-01, M-02, M-10, M-11, M-16, M-20, M-30, M-40, M-41, M-80, M-81, M-90) de duas ou mais sessões, somente nas filas em comum. Métricas que não se aplicam a alguma sessão são indicadas como "não disponível". |
+| ID   | Métrica                         | Definição e Composição                                                                                                                                                                                                 | Condição              |
+| ---- | ------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------- |
+| M-80 | Tempo total até as mesas        | Tempo individual acumulado desde a chegada na Fila 1 até o atendimento na Fila 2: $\text{espera}_{\text{F1}} + \text{espera}_{\text{F2}}$. Estatísticas completas: média, mediana, desvio padrão, mín, máx, P90 e P95. | Filas 1 e 2 ativas    |
+| M-81 | Tempo total no restaurante      | Tempo integral de permanência no RU, desde a chegada na Fila 1 até a saída final na Fila 3: $\text{espera}_{\text{F1}} + \text{espera}_{\text{F2}} + \text{permanência}_{\text{mesas}}$. Média exata.                  | Filas 1, 2 e 3 ativas |
+| M-82 | Participação de cada fila       | Fração percentual de cada fila no tempo total médio: $(\text{tempo médio da fila} / \text{tempo total}) \times 100$.                                                                                                   | 2 ou mais filas       |
+| M-83 | Ranking de gargalo              | Identificação e destaque da etapa com maior tempo médio de retenção ou maior fila acumulada.                                                                                                                           | 2 ou mais filas       |
+| M-84 | Pessoas no sistema              | Curva temporal e valor de pico da soma total de pessoas simultâneas em todas as filas ativas.                                                                                                                          | 2 ou mais filas       |
+| M-85 | Balanço de consistência         | Validação de conservação de fluxo: $\text{entradas} - \text{saídas} - \text{anuladas} = \text{presentes}$. Aponta divergências na coleta.                                                                              | Todas as filas        |
+| M-86 | Tempo Mesas até a Saída         | Tempo decorrido entre a chegada na Fila 2 (após catraca) e a saída final na Fila 3 (`tempoMesasAteSaida`). Média, mediana, desvio padrão, mín, máx, P90 e P95.                                                         | Filas 2 e 3 ativas    |
+| M-87 | Resumo de Trânsito até as Mesas | Objeto executivo `transitoMesas`: `{ count, mediaSeg, medianaSeg, p90Seg }` para cards de visão rápida no painel e histórico.                                                                                          | Filas 1 e 2 ativas    |
+| M-88 | Resumo de Trânsito até a Saída  | Objeto executivo `transitoSaida`: `{ count, mediaSeg, medianaSeg, p90Seg }` sintetizando a permanência completa no RU.                                                                                                 | Filas 1, 2 e 3 ativas |
 
 ---
 
-## 7. Onde cada métrica aparece
+## 5. Métricas de Ocupação do Salão e Mesas (216 cadeiras)
 
-| Grupo | Tela (relatório) | CSV de resumo | CSV por bloco | CSV de pessoas | Relatório imprimível |
-|---|---|---|---|---|---|
-| 2.1 a 2.4 | Aba da fila | Sim | — | M-20 a M-26 por pessoa | Sim |
-| 2.5 e 2.5.1 | Aba da fila e gráfico | Sim | M-73, M-75 | — | Sim |
-| 2.6 | Aba da fila | Sim | — | — | Sim |
-| 3 | Tabela por bloco | — | Sim | — | Sim |
-| 4 | Visão geral | Sim | — | Tempo por fila e total | Sim |
-| 5 | Visão geral e painel | Sim | M-74 | — | Sim |
-| 6 | Tela de comparação | — | — | — | — |
+Modelagem física detalhada do salão de refeições do RU, preenchido quando os alunos passam pelo atendimento da Fila 2 e liberado dinamicamente no término da refeição rumo à saída.
+
+### 5.1 Parâmetros estruturais físicos
+
+- **Capacidade nominal total ($C_{\text{mesas}}$):** 216 cadeiras.
+- **Layout arquitetural:** 4 fileiras paralelas com 9 mesas cada = **36 mesas**.
+- **Capacidade por mesa:** 6 cadeiras por mesa.
+
+### 5.2 Catálogo de métricas de ocupação das mesas
+
+| ID    | Métrica                         | Fórmula / Definição                                                                                                     | Unidade            |
+| ----- | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | ------------------ |
+| M-110 | Capacidade total de assentos    | Parâmetro nominal físico constante: $4 \times 9 \times 6 = 216$.                                                        | cadeiras           |
+| M-111 | Cadeiras ocupadas em tempo real | Quantidade instantânea de alunos sentados no salão no instante $t$: $n_{\text{mesas}}(t)$.                              | cadeiras           |
+| M-112 | Cadeiras livres em tempo real   | Lugares vagos imediatos: $\max(0, 216 - n_{\text{mesas}}(t))$.                                                          | cadeiras           |
+| M-113 | Taxa de ocupação instantânea    | $(n_{\text{mesas}}(t) / 216) \times 100$.                                                                               | %                  |
+| M-114 | Mesas ocupadas estimadas        | $\min(36, \lceil n_{\text{mesas}}(t) / 6 \rceil)$. Estimativa de mesas com ao menos 1 pessoa sentada.                   | mesas              |
+| M-115 | Status de ocupação instantâneo  | Rótulo qualitativo em tempo real: _Tranquilo_ (< 50%), _Moderado_ (50-74%), _Quase Cheio_ (75-89%) ou _Lotado_ (≥ 90%). | rótulo             |
+| M-116 | Pico de cadeiras ocupadas       | Maior número simultâneo de cadeiras ocupadas na sessão: $\max_t n_{\text{mesas}}(t)$ e o instante do pico.              | cadeiras e horário |
+| M-117 | Taxa de ocupação no pico        | $(\text{pico} / 216) \times 100$.                                                                                       | %                  |
+| M-118 | Cadeiras livres no pico         | $216 - \text{pico}$. Assentos remanescentes no momento de maior lotação.                                                | cadeiras           |
+| M-119 | Status no pico                  | Classificação qualitativa da lotação máxima alcançada na sessão.                                                        | rótulo             |
+| M-120 | Média de cadeiras ocupadas      | Média ponderada pelo tempo: $(1/T) \cdot \int_0^T n_{\text{mesas}}(t) \, dt$.                                           | cadeiras           |
+| M-121 | Taxa média de ocupação          | $(\text{média ponderada} / 216) \times 100$.                                                                            | %                  |
+| M-122 | Total de entradas nas mesas     | Quantidade de alunos que sentaram às mesas durante toda a coleta (saídas da Fila 2).                                    | pessoas            |
 
 ---
 
-## 8. Premissas e limitações
+## 6. Cobertura e Qualidade dos Dados
 
-1. **Ordem FIFO.** O pareamento entre entrada e saída assume que as pessoas saem na ordem em que entraram. Na fila 3 isso não vale (as pessoas deixam as mesas em ordem diferente da de chegada), portanto os valores individuais e as estatísticas de dispersão são estimados. A **média** é exata, pois a soma dos tempos independe da ordem de pareamento.
-2. **Tempo de cada pessoa na fila 1 e na fila 2** também pressupõe FIFO; ultrapassagens ocasionais afetam os valores individuais, mas não as contagens, as vazões nem as médias.
-3. **Horário de registro.** Os horários refletem o toque do operador, com atraso típico inferior a 1 s. Eventos enviados após reconexão são marcados como tardios.
-4. **Cobertura.** A ausência de eventos não significa ausência de pessoas: pode ser falta de coleta. Por isso a cobertura (M-90) e as lacunas (M-91) acompanham todas as métricas de taxa e de ociosidade.
-5. **Ajustes de fila** corrigem o estado e o comprimento da fila, mas são excluídos das métricas de tempo, de intervalo e de vazão.
-6. **Pessoas sem saída ao final** não entram nas estatísticas de tempo (M-20 a M-26); são informadas em M-27. Com muitas pessoas nessa condição, as médias tendem a subestimar o tempo real.
-7. **Taxa de serviço.** A taxa agregada (M-13) subestima a capacidade quando a fila fica vazia; a taxa em ocupação (M-14) é a mais adequada para ρ e para o modelo M/M/c.
-8. **M/M/c** é apenas uma referência: a chegada em grupos, a variação do tempo de serviço e a coleta de 1 hora podem afastar o comportamento real do modelo.
-9. **Amostras pequenas** (poucas saídas) geram estatísticas instáveis, em especial os percentis P90 e P95 e o coeficiente de variação.
-10. **Tempo sentado nas mesas** é medido apenas como parte da fila 3 (permanência desde a chegada às mesas até a saída do restaurante).
-11. Sessões gravadas antes do encadeamento `2>3` mantêm a fila 3 independente (numeração própria), e as métricas M-81 e M-82 não se aplicam a elas. Sessões antigas não têm registro de cobertura (M-90 a M-92 indicam "não disponível").
+| ID   | Métrica                                     | Definição                                                                                                                                           |
+| ---- | ------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| M-90 | Cobertura por fila (%)                      | Fração percentual de $T$ com ao menos um aparelho conectado e associado à fila.                                                                     |
+| M-91 | Lacunas de cobertura                        | Lista discriminada de intervalos sem nenhum operador ativo (início, fim e duração).                                                                 |
+| M-92 | Pessoas afetadas por lacuna                 | Pessoas cujo trânsito na fila coincidiu com uma lacuna. Excluídas do cômputo de espera quando selecionada a opção "Excluir períodos sem cobertura". |
+| M-93 | Eventos tardios                             | Eventos sincronizados após período de desconexão móvel (flag `tardio: true`).                                                                       |
+| M-94 | Comandos rejeitados                         | Totalização e classificação de rejeições (`FILA_VAZIA`, `CABECA_MUDOU`, `JA_ATENDIDO`, `FILA_INATIVA`, etc.).                                       |
+| M-95 | Auditoria de anulações, reversões e ajustes | Quantitativo consolidado por aparelho e operador para controle de integridade.                                                                      |
+| M-96 | Desconexões por aparelho                    | Frequência, horários e duração de interrupções de conexão de cada celular.                                                                          |
+| M-97 | Eventos por aparelho                        | Contagem de toques e registros processados por cada dispositivo da sessão.                                                                          |
+| M-98 | Histórico de aparelhos por fila             | Rastreamento de trocas de área de atuação e ativações em modo apoio ao longo da sessão.                                                             |
 
 ---
 
-## 9. Manutenção deste documento
+## 7. Comparação Entre Sessões
 
-- Cada ID do documento deve existir no registro `METRICAS` de `shared/metricas.js`, e vice-versa. Um teste automatizado verifica essa correspondência.
-- Ao incluir, alterar ou remover uma métrica, atualizar este arquivo e a versão do documento no cabeçalho.
+| ID    | Métrica                | Definição                                                                                                                                                                                                                      |
+| ----- | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| M-100 | Comparação lado a lado | Painel comparativo consolidando as métricas centrais (M-01, M-02, M-10, M-11, M-16, M-20, M-30, M-40, M-41, M-80, M-81, M-86, M-90, M-116, M-120) entre duas ou mais sessões selecionadas, alinhando as filas correspondentes. |
+
+---
+
+## 8. Onde Cada Métrica Aparece
+
+| Grupo de Métricas                          | Painel ao Vivo             | Tela de Histórico & Análise                  | Mapa Animado / SVG                 | Exportação CSV              | Relatório Imprimível     |
+| ------------------------------------------ | -------------------------- | -------------------------------------------- | ---------------------------------- | --------------------------- | ------------------------ |
+| **Contagens e Tempos (M-01 a M-09)**       | Cards das filas            | Aba de cada fila                             | Badges dos blocos e caixas         | `resumo.csv`                | Seção de tabelas         |
+| **Taxas e Vazão (M-10 a M-19)**            | Cards de taxa              | Gráficos e cards de vazão                    | —                                  | `resumo.csv`, `blocos.csv`  | Gráficos de barras       |
+| **Tempos de Espera (M-20 a M-27)**         | Média em tempo real        | Tabela de dispersão (P90, P95)               | Tooltip do bloco                   | `pessoas.csv`               | Tabela detalhada         |
+| **Intervalos (M-30 a M-38)**               | —                          | Estatísticas da fila                         | —                                  | `resumo.csv`                | Seção estatística        |
+| **Comprimento (M-40 a M-43)**              | Comprimento atual          | Gráfico temporal comparativo                 | Blocos posicionados                | `resumo.csv`, `blocos.csv`  | Gráfico $n(t)$           |
+| **Ociosidade (M-50 a M-54)**               | —                          | Painel de perdas e pausas                    | —                                  | `resumo.csv`                | Tabela de ociosidade     |
+| **Little e Teórico (M-60, M-61)**          | —                          | Card de validação teórica                    | —                                  | `resumo.csv`                | Diagnóstico Little       |
+| **Blocos de Tempo (M-70 a M-75)**          | —                          | Tabela analítica por blocos                  | —                                  | `blocos.csv`                | Tabela impressa          |
+| **Encadeamento Multi-Filas (M-80 a M-88)** | Indicadores de trânsito    | Cards de Percurso (Mesas e Saída)            | Fluxo contínuo das rotas           | `resumo.csv`, `pessoas.csv` | Seção de percurso total  |
+| **Salão & Mesas (M-110 a M-122)**          | Card monitor Salão & Mesas | Card Ocupação do Salão (pico, média, status) | Indicador `X/216 cadeiras` + barra | `resumo.csv`                | Seção Salão e Capacidade |
+| **Qualidade e Cobertura (M-90 a M-98)**    | Alerta de cobertura        | Tabela de cobertura e auditoria              | Status de conexão                  | `resumo.csv`, `blocos.csv`  | Auditoria de rede        |
+| **Comparação (M-100)**                     | —                          | Tela comparativa multi-sessão                | —                                  | —                           | Comparativo impresso     |
+
+---
+
+## 9. Premissas, Hipóteses e Limitações
+
+1. **Dinâmica do Salão de Mesas:** A ocupação das mesas é computada a partir da saída da Fila 2 (ou Fila 1 caso a Fila 2 esteja inativa). Os alunos permanecem sentados nas 216 cadeiras durante a refeição. A liberação ocorre no instante em que o aluno avança para a saída na Fila 3. Caso a Fila 3 não seja coletada na sessão, a cadeira é liberada automaticamente após o tempo de permanência padrão (`tempoRefeicaoMin`, configurável, padrão 20 min).
+2. **Fluxo Livre na Fila 3:** Na Fila 3, os blocos não acumulam fila de retenção estática no corredor das mesas; cada bloco desloca-se de modo individual ou sequencial suave até a caixa Saída, sumindo no instante do contato, com 100% de opacidade e sem sobreposições.
+3. **Disciplina FIFO:** O pareamento de entrada e saída nas Filas 1 e 2 pressupõe disciplina primeiro a entrar, primeiro a sair. Ultrapassagens pontuais alteram os tempos individuais de espera, mas preservam com rigor exato as contagens, vazões, médias e comprimentos ponderados.
+4. **Precisão Temporal dos Registros:** Os eventos registram o instante exato do toque do operador no celular (latência média de rede local < 100 ms). Eventos emitidos em modo offline registram `tardio: true` e são reintegrados mantendo a linha do tempo cronológica fiel.
+5. **Ajustes Manuais de Fila:** O comando "Ajustar fila" recalibra o número físico de pessoas presentes no instante do ajuste, mas tais eventos artificiais são formalmente isolados dos cálculos de tempo de espera e vazão para não distorcer as métricas operacionais.
+6. **M/M/c Indicativo:** O modelo Erlang C assume taxa de chegada puramente poissoniana e tempos exponenciais em regime permanente ($\rho < 1$). No ambiente universitário, chegadas em blocos de turmas e variações de cardápio podem afastar o comportamento empírico do modelo matemático de referência.
+
+---
+
+## 10. Manutenção deste Documento
+
+- Qualquer nova métrica criada no backend (`server/sessao.js`), no módulo analítico compartilhado (`shared/metricas.js`) ou no motor de estado derivado (`shared/estado.js`) deve receber um ID estável subsequente e ser adicionada à tabela correspondente.
+- As versões do documento seguem o Versionamento Semântico documentado no [CHANGELOG.md](file:///c:/Users/ghost/Documents/outubro/fila-ru/CHANGELOG.md).

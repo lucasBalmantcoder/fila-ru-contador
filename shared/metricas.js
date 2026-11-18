@@ -920,3 +920,117 @@ export function calcularMetricas(eventos = [], config = {}, fimMsParam = null, c
     pessoas: todasPessoas
   };
 }
+
+/**
+ * Catálogo e registro formal de IDs estáveis das métricas do sistema (conforme METRICAS.md).
+ */
+export const METRICAS = {
+  // 2.1 Contagens e tempos de referência
+  'M-01': { id: 'M-01', nome: 'Entradas (n_e)', unidade: 'pessoas' },
+  'M-02': { id: 'M-02', nome: 'Saídas (n_s)', unidade: 'pessoas' },
+  'M-03': { id: 'M-03', nome: 'Anuladas', unidade: 'pessoas' },
+  'M-04': { id: 'M-04', nome: 'Revertidas', unidade: 'eventos' },
+  'M-05': { id: 'M-05', nome: 'Ajustes', unidade: 'eventos' },
+  'M-06': { id: 'M-06', nome: 'Pessoas na fila ao encerrar', unidade: 'pessoas' },
+  'M-07': { id: 'M-07', nome: 'Duração observada (T)', unidade: 's' },
+  'M-08': { id: 'M-08', nome: 'Tempo até a primeira saída', unidade: 's' },
+  'M-09': { id: 'M-09', nome: 'Tempo após a última saída', unidade: 's' },
+
+  // 2.2 Taxas e vazão
+  'M-10': { id: 'M-10', nome: 'Taxa de entrada (lambda)', unidade: 'pessoas/min' },
+  'M-11': { id: 'M-11', nome: 'Vazão global', unidade: 'pessoas/min' },
+  'M-12': { id: 'M-12', nome: 'Vazão em operação', unidade: 'pessoas/min' },
+  'M-13': { id: 'M-13', nome: 'Taxa de serviço efetiva (mu agregada)', unidade: 'pessoas/min' },
+  'M-14': { id: 'M-14', nome: 'Taxa de serviço em ocupação (mu ocupada)', unidade: 'pessoas/min' },
+  'M-15': { id: 'M-15', nome: 'Taxa de serviço por servidor (mu_c)', unidade: 'pessoas/min' },
+  'M-16': { id: 'M-16', nome: 'Fator de utilização (rho)', unidade: '' },
+  'M-17': { id: 'M-17', nome: 'Saídas por bloco', unidade: 'pessoas' },
+  'M-18': { id: 'M-18', nome: 'Entradas por bloco', unidade: 'pessoas' },
+  'M-19': { id: 'M-19', nome: 'Resumo por bloco', unidade: 'pessoas' },
+
+  // 2.3 Tempo na fila (por pessoa)
+  'M-20': { id: 'M-20', nome: 'Tempo de espera médio (Wq)', unidade: 's' },
+  'M-21': { id: 'M-21', nome: 'Tempo de espera mediana', unidade: 's' },
+  'M-22': { id: 'M-22', nome: 'Tempo de espera desvio padrão', unidade: 's' },
+  'M-23': { id: 'M-23', nome: 'Tempo de espera mínimo', unidade: 's' },
+  'M-24': { id: 'M-24', nome: 'Tempo de espera máximo', unidade: 's' },
+  'M-25': { id: 'M-25', nome: 'Tempo de espera P90', unidade: 's' },
+  'M-26': { id: 'M-26', nome: 'Tempo de espera P95', unidade: 's' },
+  'M-27': { id: 'M-27', nome: 'Pessoas sem saída ao final', unidade: 'pessoas' },
+
+  // 2.4 Intervalos
+  'M-30': { id: 'M-30', nome: 'Intervalo entre saídas: média', unidade: 's' },
+  'M-31': { id: 'M-31', nome: 'Intervalo entre saídas: mediana', unidade: 's' },
+  'M-32': { id: 'M-32', nome: 'Intervalo entre saídas: desvio padrão', unidade: 's' },
+  'M-33': { id: 'M-33', nome: 'Intervalo entre saídas: CV', unidade: '' },
+  'M-34': { id: 'M-34', nome: 'Intervalo entre saídas: mínimo', unidade: 's' },
+  'M-35': { id: 'M-35', nome: 'Intervalo entre saídas: máximo', unidade: 's' },
+  'M-36': { id: 'M-36', nome: 'Intervalo entre saídas: P90', unidade: 's' },
+  'M-37': { id: 'M-37', nome: 'Intervalo entre saídas: P95', unidade: 's' },
+  'M-38': { id: 'M-38', nome: 'Intervalos entre entradas', unidade: 's' },
+
+  // 2.5 Comprimento da fila
+  'M-40': { id: 'M-40', nome: 'Comprimento médio (Lq)', unidade: 'pessoas' },
+  'M-41': { id: 'M-41', nome: 'Comprimento máximo', unidade: 'pessoas' },
+  'M-42': { id: 'M-42', nome: 'Tempo com a fila vazia', unidade: 's e %' },
+  'M-43': { id: 'M-43', nome: 'Série temporal do comprimento', unidade: 'pessoas' },
+
+  // 2.5.1 Ociosidade e demanda
+  'M-50': { id: 'M-50', nome: 'Pausas de serviço parado', unidade: 'pausas' },
+  'M-51': { id: 'M-51', nome: 'Tempo de serviço parado', unidade: 's e %' },
+  'M-52': { id: 'M-52', nome: 'Maior pausa com fila não vazia', unidade: 's' },
+  'M-53': { id: 'M-53', nome: 'Tempo sem demanda', unidade: 's e %' },
+  'M-54': { id: 'M-54', nome: 'Tempo sem cobertura', unidade: 's e %' },
+
+  // 2.6 Little e teórico
+  'M-60': { id: 'M-60', nome: 'Verificação da Lei de Little', unidade: '%' },
+  'M-61': { id: 'M-61', nome: 'Modelo Teórico M/M/c (Erlang C)', unidade: '' },
+
+  // 3. Tabela analítica por blocos
+  'M-70': { id: 'M-70', nome: 'Início-Fim do bloco', unidade: '' },
+  'M-71': { id: 'M-71', nome: 'Entradas no bloco', unidade: 'pessoas' },
+  'M-72': { id: 'M-72', nome: 'Saídas no bloco', unidade: 'pessoas' },
+  'M-73': { id: 'M-73', nome: 'Comprimento médio no bloco', unidade: 'pessoas' },
+  'M-74': { id: 'M-74', nome: 'Cobertura do bloco (%)', unidade: '%' },
+  'M-75': { id: 'M-75', nome: 'Pausas longas no bloco', unidade: 'pausas' },
+
+  // 4. Métricas combinadas e encadeamentos
+  'M-80': { id: 'M-80', nome: 'Tempo total até as mesas (Fila 1 + Fila 2)', unidade: 's' },
+  'M-81': { id: 'M-81', nome: 'Tempo total no restaurante (Fila 1 + Fila 2 + Fila 3)', unidade: 's' },
+  'M-82': { id: 'M-82', nome: 'Participação de cada fila no tempo total', unidade: '%' },
+  'M-83': { id: 'M-83', nome: 'Ranking de gargalo', unidade: '' },
+  'M-84': { id: 'M-84', nome: 'Pessoas no sistema', unidade: 'pessoas' },
+  'M-85': { id: 'M-85', nome: 'Balanço de consistência de fluxo', unidade: '' },
+  'M-86': { id: 'M-86', nome: 'Tempo Mesas até a Saída (Fila 2 + Fila 3)', unidade: 's' },
+  'M-87': { id: 'M-87', nome: 'Resumo de trânsito até as mesas (transitoMesas)', unidade: '' },
+  'M-88': { id: 'M-88', nome: 'Resumo de trânsito até a saída (transitoSaida)', unidade: '' },
+
+  // 5. Ocupação do Salão e Mesas (216 cadeiras)
+  'M-110': { id: 'M-110', nome: 'Capacidade total de assentos das mesas', unidade: 'cadeiras' },
+  'M-111': { id: 'M-111', nome: 'Cadeiras ocupadas em tempo real', unidade: 'cadeiras' },
+  'M-112': { id: 'M-112', nome: 'Cadeiras livres em tempo real', unidade: 'cadeiras' },
+  'M-113': { id: 'M-113', nome: 'Taxa de ocupação instantânea das mesas', unidade: '%' },
+  'M-114': { id: 'M-114', nome: 'Mesas ocupadas estimadas', unidade: 'mesas' },
+  'M-115': { id: 'M-115', nome: 'Status de ocupação instantâneo', unidade: 'rótulo' },
+  'M-116': { id: 'M-116', nome: 'Pico de cadeiras ocupadas', unidade: 'cadeiras e horário' },
+  'M-117': { id: 'M-117', nome: 'Taxa de ocupação no pico', unidade: '%' },
+  'M-118': { id: 'M-118', nome: 'Cadeiras livres no pico', unidade: 'cadeiras' },
+  'M-119': { id: 'M-119', nome: 'Status no pico', unidade: 'rótulo' },
+  'M-120': { id: 'M-120', nome: 'Média de cadeiras ocupadas ponderada', unidade: 'cadeiras' },
+  'M-121': { id: 'M-121', nome: 'Taxa média de ocupação das mesas', unidade: '%' },
+  'M-122': { id: 'M-122', nome: 'Total de entradas nas mesas', unidade: 'pessoas' },
+
+  // 6. Cobertura e qualidade dos dados
+  'M-90': { id: 'M-90', nome: 'Cobertura por fila (%)', unidade: '%' },
+  'M-91': { id: 'M-91', nome: 'Lacunas de cobertura', unidade: 'intervalos' },
+  'M-92': { id: 'M-92', nome: 'Pessoas afetadas por lacuna', unidade: 'pessoas' },
+  'M-93': { id: 'M-93', nome: 'Eventos tardios', unidade: 'eventos' },
+  'M-94': { id: 'M-94', nome: 'Comandos rejeitados', unidade: 'comandos' },
+  'M-95': { id: 'M-95', nome: 'Auditoria de anulações, reversões e ajustes', unidade: 'eventos' },
+  'M-96': { id: 'M-96', nome: 'Desconexões por aparelho', unidade: 'desconexões' },
+  'M-97': { id: 'M-97', nome: 'Eventos por aparelho', unidade: 'eventos' },
+  'M-98': { id: 'M-98', nome: 'Histórico de aparelhos por fila', unidade: '' },
+
+  // 7. Comparação
+  'M-100': { id: 'M-100', nome: 'Comparação lado a lado multi-sessão', unidade: '' }
+};
