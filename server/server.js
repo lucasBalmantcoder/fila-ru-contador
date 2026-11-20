@@ -141,6 +141,7 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
         pin: PIN_ACESSO,
         pinFixoPorParametro: statusPin.fixoPorParametro,
         origemPin: statusPin.origem,
+        versao: '4.6.0',
         urlCelular: urlCelularBase,
         qrDataUrl,
         qrFilas: {

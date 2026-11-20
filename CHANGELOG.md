@@ -4,6 +4,8 @@ Todas as alterações relevantes deste projeto serão documentadas neste arquivo
 O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.0/) e este projeto adere ao [Versionamento Semântico](https://semver.org/lang/pt-BR/).
 
 ## [Não lançado]
+
+## [4.6.0] - 2026-11-19
 ### Adicionado
 - Implementado motor de simulação por eventos discretos guiado por traço histórico (`shared/simulador.js`), suportando cenários "What-If" para dimensionamento de catracas ($c_1$), postos de buffet ($c_2$), velocidade de serviço e retenção por bloqueio nas mesas (*service blocking*).
 - Criada interface completa de simulações com gráficos sobrepostos, tabela comparativa lado a lado e diagnóstico de gargalos (`public/simulacoes.html`, `public/simulacoes.js`).
