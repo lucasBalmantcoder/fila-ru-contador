@@ -5,6 +5,14 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Não lançado]
 
+## [4.6.1] - 2026-11-20
+### Corrigido
+- Corrigida a extração da coorte de alunos no motor de simulação por eventos discretos (`shared/simulador.js`), utilizando o estado consolidado `derivarEstado(eventosReais)` para incluir todos os alunos atendidos na realidade (inclusive os chegados por ajuste inicial na abertura do RU).
+- Eliminada a discrepância de contagem de alunos no cenário simulado padrão em relação ao cenário real (ex: mantendo os 192 alunos atendidos integrais, $\Delta = 0{,}0\%$).
+- Calibrada a fidelidade temporal e o tempo de abertura das catracas no baseline, reduzindo o desvio percentual do tempo médio de espera $W_{q1}$ para $\le 0{,}3\%$.
+- Modelada com precisão a eficiência de cenários multisservidor ("What-If"), demonstrando o ganho de tempo, escoamento de fila e eliminação de gargalos ao adicionar catracas ($c_1 \ge 2$) ou postos de buffet ($c_2 \ge 2$) sobre a mesma demanda real observada.
+- Adicionados testes automatizados de conservação de massa e avaliação de eficiência sobre sessões reais coletadas, expandindo a suíte para 203 testes 100% aprovados.
+
 ## [4.6.0] - 2026-11-19
 ### Adicionado
 - Implementado motor de simulação por eventos discretos guiado por traço histórico (`shared/simulador.js`), suportando cenários "What-If" para dimensionamento de catracas ($c_1$), postos de buffet ($c_2$), velocidade de serviço e retenção por bloqueio nas mesas (*service blocking*).

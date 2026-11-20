@@ -874,6 +874,25 @@ const duracaoPerfMs = Date.now() - tIniPerf;
 assert(rPerf.sucesso === true, 'Simulação de 5.000 chegadas executada com sucesso');
 assert(duracaoPerfMs < 500, `Performance de Simulação: 5.000 chegadas processadas em ${duracaoPerfMs}ms (< 500ms)`);
 
+// 9. Fidelidade ao Traço Real e Conservação da Coorte (Sessão Histórica de Almoço)
+const dirSessaoReal = fs.readdirSync('dados').find(d => d.includes('azuq2'));
+if (dirSessaoReal) {
+  const caminhoLog = path.join('dados', dirSessaoReal, 'eventos.jsonl');
+  if (fs.existsSync(caminhoLog)) {
+    const evsReais = fs.readFileSync(caminhoLog, 'utf-8').trim().split('\n').map(l => JSON.parse(l));
+    const rBaseReal = simularSessao(evsReais, {}, { c1: 1, c2: 1, capacidadeMesas: 216, fatorF1: 0 });
+    assert(rBaseReal.sucesso === true, 'Sessão real simula com sucesso no baseline');
+    assert(rBaseReal.metricasSimuladas.filas[1].n_atendimentos === rBaseReal.metricasReais.filas[1].n_atendimentos, `Conservação de coorte real: simulado (${rBaseReal.metricasSimuladas.filas[1].n_atendimentos}) == real (${rBaseReal.metricasReais.filas[1].n_atendimentos})`);
+    assert(rBaseReal.calibracao.diffPerc <= 5.0, `Calibração no baseline real aderente <= 5% (obtido: ${rBaseReal.calibracao.diffPerc.toFixed(2)}%)`);
+
+    // 10. Ganho de Eficiência Multisservidor (c1=2) sobre Demanda Real Integral
+    const rWhatIf2 = simularSessao(evsReais, {}, { c1: 2, c2: 1, capacidadeMesas: 216, fatorF1: 0 });
+    assert(rWhatIf2.sucesso === true, 'Sessão real simula com sucesso com c1=2');
+    assert(rWhatIf2.metricasSimuladas.filas[1].n_atendimentos === rBaseReal.metricasReais.filas[1].n_atendimentos, `Cenário c1=2 atende a integralidade da coorte (${rWhatIf2.metricasSimuladas.filas[1].n_atendimentos} alunos)`);
+    assert(rWhatIf2.metricasSimuladas.filas[1].statsEspera.media < rBaseReal.metricasSimuladas.filas[1].statsEspera.media, `Ganho de eficiência com 2 catracas: espera média cai de ${rBaseReal.metricasSimuladas.filas[1].statsEspera.media.toFixed(1)}s para ${rWhatIf2.metricasSimuladas.filas[1].statsEspera.media.toFixed(1)}s`);
+  }
+}
+
 try {
   fs.rmSync(dirTempTeste, { recursive: true, force: true });
 } catch (_) {}

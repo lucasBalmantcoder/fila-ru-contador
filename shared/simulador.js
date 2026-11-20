@@ -61,15 +61,19 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
   const capacidadeMesas = Math.max(1, parseInt(paramsSimulacao.capacidadeMesas, 10) || cfgOrig.capacidadeMesas || 216);
   const deltaMinutosMesasMs = (Number(paramsSimulacao.deltaMinutosMesas) || 0) * 60 * 1000;
 
-  // 2. Extrair dados empíricos de chegadas e tempos de serviço puros
-  const chegadasF1Reais = eventosReais
-    .filter(e => e.tipo === 'chegada' && Number(e.fila || 1) === 1 && !e.ajuste)
-    .sort((a, b) => a.t - b.t || a.seq - b.seq);
+  // 2. Extrair estado consolidado da sessão original
+  const estadoOriginal = derivarEstado(eventosReais);
+  const todasPessoasOrig = estadoOriginal.pessoas || [];
 
-  if (chegadasF1Reais.length === 0) {
+  // Pessoas efetivas da Fila 1 (exclui anulações reais)
+  const pessoasF1Originais = todasPessoasOrig
+    .filter(p => (p.fila || 1) === 1 && p.status !== 'anulada')
+    .sort((a, b) => (a.chegadaMs ?? tInicio) - (b.chegadaMs ?? tInicio) || a.pessoa - b.pessoa);
+
+  if (pessoasF1Originais.length === 0) {
     return {
       sucesso: false,
-      motivo: 'Nenhuma chegada registrada na Fila 1.',
+      motivo: 'Nenhuma chegada válida registrada na Fila 1.',
       eventosSimulados: [],
       metricasSimuladas: null,
       metricasReais: null,
@@ -78,37 +82,25 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
     };
   }
 
-  // Dedução dos tempos de serviço puros observados na Fila 1 e Fila 2
-  const atendimentosF1Reais = eventosReais
-    .filter(e => e.tipo === 'atendimento' && Number(e.fila || 1) === 1 && !e.ajuste)
-    .sort((a, b) => a.t - b.t || a.seq - b.seq);
+  // 3. Dedução dos tempos de serviço puros observados na Fila 1 e Fila 2
+  const atendimentosF1 = pessoasF1Originais
+    .filter(p => p.atendimentoMs !== null)
+    .sort((a, b) => a.atendimentoMs - b.atendimentoMs);
 
-  const atendimentosF2Reais = eventosReais
-    .filter(e => e.tipo === 'atendimento' && Number(e.fila || 1) === 2 && !e.ajuste)
-    .sort((a, b) => a.t - b.t || a.seq - b.seq);
-
-  const chegadasF3Reais = eventosReais
-    .filter(e => e.tipo === 'chegada' && Number(e.fila || 1) === 3 && !e.ajuste);
-  const atendimentosF3Reais = eventosReais
-    .filter(e => e.tipo === 'atendimento' && Number(e.fila || 1) === 3 && !e.ajuste);
-
-  // Mapa de tempos de serviço observados F1
-  const mapChegadasF1 = new Map(chegadasF1Reais.map(c => [c.pessoa, c]));
+  let ultimoAtendF1 = tInicio;
   const mapServicoPuroF1 = new Map();
   const servicosF1Validos = [];
-  let ultimoAtendF1 = tInicio;
 
-  for (const at of atendimentosF1Reais) {
-    const ch = mapChegadasF1.get(at.pessoa);
-    if (ch) {
-      const iniServ = Math.max(ch.t, ultimoAtendF1);
-      const dur = at.t - iniServ;
-      if (dur > 0) {
-        mapServicoPuroF1.set(at.pessoa, dur);
+  for (const p of atendimentosF1) {
+    const iniServ = Math.max(p.chegadaMs ?? tInicio, ultimoAtendF1);
+    const dur = p.atendimentoMs - iniServ;
+    if (dur > 0) {
+      mapServicoPuroF1.set(p.pessoa, dur);
+      if (dur <= 45000) {
         servicosF1Validos.push(dur);
       }
     }
-    ultimoAtendF1 = at.t;
+    ultimoAtendF1 = p.atendimentoMs;
   }
 
   servicosF1Validos.sort((a, b) => a - b);
@@ -116,19 +108,33 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
     ? servicosF1Validos[Math.floor(servicosF1Validos.length / 2)]
     : 4000;
 
+  // Instante de abertura das catracas
+  const primeiroAlunoF1 = atendimentosF1[0];
+  const esperaPrimeiroF1 = primeiroAlunoF1 ? (primeiroAlunoF1.atendimentoMs - (primeiroAlunoF1.chegadaMs ?? tInicio)) : 0;
+  // Se o primeiro aluno aguardou > 45s antes da catraca abrir, o início de operação coincide com o primeiro atendimento menos a mediana de serviço
+  const tAberturaF1 = (esperaPrimeiroF1 > 45000)
+    ? Math.max(tInicio, primeiroAlunoF1.atendimentoMs - medianaS1)
+    : tInicio;
+
+  // Multiplicadores da taxa: taxa + X% => tempo * (1 / (1 + X/100))
+  const multTempoF1 = 1 / (1 + (fatorF1 / 100));
+  const multTempoF2 = 1 / (1 + (fatorF2 / 100));
+
   // Mapa de tempos de serviço observados F2
+  const pessoasF2Orig = todasPessoasOrig.filter(p => p.fila === 2 && p.status === 'atendida');
   const mapServicoPuroF2 = new Map();
   const servicosF2Validos = [];
-  let ultimoAtendF2 = tInicio;
 
-  for (const at of atendimentosF2Reais) {
-    const iniServ = Math.max(at.t - 8000, ultimoAtendF2); // estimativa empírica se não pareado
-    const dur = at.t - iniServ;
-    if (dur > 0) {
-      mapServicoPuroF2.set(at.pessoa, dur);
+  for (const p of pessoasF2Orig) {
+    const intv = p.intervaloAtendimentoMs;
+    if (typeof intv === 'number' && intv > 0 && intv <= 60000) {
+      mapServicoPuroF2.set(p.pessoa, intv);
+      servicosF2Validos.push(intv);
+    } else if (p.atendimentoMs && p.chegadaMs && (p.atendimentoMs - p.chegadaMs) > 0) {
+      const dur = Math.min(60000, p.atendimentoMs - p.chegadaMs);
+      mapServicoPuroF2.set(p.pessoa, dur);
       servicosF2Validos.push(dur);
     }
-    ultimoAtendF2 = at.t;
   }
 
   servicosF2Validos.sort((a, b) => a - b);
@@ -137,15 +143,14 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
     : 7000;
 
   // Duração empírica nas mesas (F3)
-  const mapChegadasF3 = new Map(chegadasF3Reais.map(c => [c.pessoa, c]));
+  const pessoasF3Orig = todasPessoasOrig.filter(p => p.fila === 3 && p.status === 'atendida');
   const mapPermanenciaMesas = new Map();
   const permanenciasValidas = [];
 
-  for (const at3 of atendimentosF3Reais) {
-    const ch3 = mapChegadasF3.get(at3.pessoa);
-    if (ch3 && at3.t > ch3.t) {
-      const dur = at3.t - ch3.t;
-      mapPermanenciaMesas.set(at3.pessoa, dur);
+  for (const p of pessoasF3Orig) {
+    if (p.atendimentoMs && p.chegadaMs && p.atendimentoMs > p.chegadaMs) {
+      const dur = p.atendimentoMs - p.chegadaMs;
+      mapPermanenciaMesas.set(p.pessoa, dur);
       permanenciasValidas.push(dur);
     }
   }
@@ -155,24 +160,28 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
     ? permanenciasValidas[Math.floor(permanenciasValidas.length / 2)]
     : 20 * 60 * 1000; // 20 min padrão
 
-  // Multiplicadores da taxa: taxa + X% => tempo * (1 / (1 + X/100))
-  const multTempoF1 = 1 / (1 + (fatorF1 / 100));
-  const multTempoF2 = 1 / (1 + (fatorF2 / 100));
-
-  // 3. Simulação da Fila 1 (M/G/c1 FIFO compartilhada com despacho paralelo)
-  const servidoresF1 = new Array(c1).fill(tInicio);
+  // 4. Simulação da Fila 1 (M/G/c1 FIFO compartilhada com despacho paralelo)
+  const servidoresF1 = new Array(c1).fill(tAberturaF1);
   const alunosSimulados = [];
 
-  for (const ch of chegadasF1Reais) {
+  for (const ch of pessoasF1Originais) {
     const pId = ch.pessoa;
-    const tChegada = ch.t;
+    const tChegada = ch.chegadaMs ?? tInicio;
 
     // Obter tempo de serviço simulado
     let s1Sim;
     if (modoF1 === 'tempoFixo') {
       s1Sim = tempoFixoF1Ms;
     } else {
-      const s1Real = mapServicoPuroF1.get(pId) || medianaS1;
+      let s1Real = mapServicoPuroF1.get(pId) || medianaS1;
+      // Em simulação com múltiplas catracas ou aceleração, pausas extremas são limitadas à mediana
+      if ((c1 > 1 || fatorF1 !== 0) && s1Real > 45000) {
+        s1Real = medianaS1;
+      }
+      // Primeiro aluno na abertura das portas tem tempo puro igual à mediana
+      if (primeiroAlunoF1 && pId === primeiroAlunoF1.pessoa && s1Real > 45000) {
+        s1Real = medianaS1;
+      }
       s1Sim = Math.max(2000, Math.round(s1Real * multTempoF1));
     }
 
@@ -204,6 +213,7 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
       s1: s1Sim,
       s2: s2Sim,
       sMesas: sMesasSim,
+      ajuste: !!ch.ajuste,
       // Fila 2 e Mesas a preencher na simulação encadeada
       tCheg2: tFimServF1,
       tIni2: null,
@@ -408,6 +418,7 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
       fila: 1,
       pessoa: a.pessoa,
       encadeado: false,
+      ajuste: a.ajuste || false,
       origem: 'simulado'
     });
 
@@ -418,6 +429,7 @@ export function simularSessao(eventosReais = [], configSessao = {}, paramsSimula
       fila: 1,
       pessoa: a.pessoa,
       encadeado: false,
+      ajuste: a.ajuste || false,
       origem: 'simulado'
     });
 

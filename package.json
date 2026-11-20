@@ -1,6 +1,6 @@
 {
   "name": "fila-ru",
-  "version": "4.6.0",
+  "version": "4.6.1",
   "description": "Sistema colaborativo em tempo real para coleta e análise de filas de restaurante universitário",
   "main": "server/server.js",
   "type": "module",
