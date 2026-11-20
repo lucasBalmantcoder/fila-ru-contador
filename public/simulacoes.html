@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#0f172a">
+  <title>Simulações What-If - Fila RU</title>
+  <link rel="stylesheet" href="estilo.css">
+  <script src="lib/chart.umd.min.js"></script>
+  <style>
+    .sim-grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 16px;
+    }
+    @media (min-width: 900px) {
+      .sim-grid {
+        grid-template-columns: repeat(3, 1fr);
+      }
+    }
+    .param-card {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .param-card h4 {
+      margin: 0;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .param-card.f1 { border-top: 4px solid #dc2626; }
+    .param-card.f2 { border-top: 4px solid #16a34a; }
+    .param-card.f3 { border-top: 4px solid #ec4899; }
+
+    .param-group {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+    .param-group label {
+      font-size: 0.8rem;
+      font-weight: 700;
+      color: var(--text-muted);
+    }
+    .param-row-val {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .slider-val-badge {
+      font-weight: 800;
+      font-size: 0.85rem;
+      min-width: 50px;
+      text-align: right;
+    }
+
+    .tabela-comparativa {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 8px;
+      font-size: 0.88rem;
+    }
+    .tabela-comparativa th, .tabela-comparativa td {
+      padding: 8px 12px;
+      border: 1px solid var(--border-color);
+      text-align: left;
+    }
+    .tabela-comparativa th {
+      background: var(--bg-subtle);
+      font-weight: 700;
+    }
+    .tabela-comparativa td.num {
+      text-align: right;
+      font-variant-numeric: tabular-nums;
+    }
+    .delta-melhoria {
+      color: #16a34a;
+      font-weight: 700;
+    }
+    .delta-piora {
+      color: #dc2626;
+      font-weight: 700;
+    }
+    .delta-neutro {
+      color: var(--text-muted);
+    }
+
+    .status-card {
+      padding: 12px 16px;
+      border-radius: 8px;
+      font-weight: 700;
+      margin-bottom: 12px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .status-verde {
+      background: rgba(22, 163, 74, 0.12);
+      border: 1px solid #16a34a;
+      color: #16a34a;
+    }
+    .status-amarelo {
+      background: rgba(217, 119, 6, 0.12);
+      border: 1px solid #d97706;
+      color: #d97706;
+    }
+    .status-vermelho {
+      background: rgba(220, 38, 38, 0.12);
+      border: 1px solid #dc2626;
+      color: #dc2626;
+    }
+
+    .chart-container-sim {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 14px;
+      height: 280px;
+      position: relative;
+    }
+
+    .premissas-box {
+      background: var(--bg-subtle);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 20px;
+      font-size: 0.85rem;
+      color: var(--text-muted);
+    }
+    .premissas-box ul {
+      margin: 6px 0 0 18px;
+      padding: 0;
+    }
+
+    @media print {
+      header, .no-print, .btn, #form-simulacao {
+        display: none !important;
+      }
+      body {
+        background: #fff !important;
+        color: #000 !important;
+      }
+      .card {
+        border: 1px solid #ccc !important;
+        box-shadow: none !important;
+      }
+      .chart-container-sim {
+        break-inside: avoid;
+        height: 220px;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- CABEÇALHO -->
+  <header>
+    <div class="brand">
+      <span>🍽️ Fila RU — Simulações What-If</span>
+    </div>
+
+    <nav class="header-nav">
+      <a href="painel.html">Painel ao Vivo</a>
+      <a href="historico.html">Histórico & Análises</a>
+      <a href="simulacoes.html" class="active">Simulações</a>
+      <a href="celular.html" target="_blank">Abrir Celular ↗</a>
+    </nav>
+
+    <div class="header-status">
+      <button class="btn btn-secondary" onclick="toggleTheme()" style="padding:4px 8px;">🌓</button>
+    </div>
+  </header>
+
+  <!-- CONTEÚDO PRINCIPAL -->
+  <main style="max-width: 1200px; margin: 0 auto; padding: 16px;">
+
+    <!-- PAINEL DE CONTROLE DE PARÂMETROS -->
+    <div class="card no-print" id="form-simulacao" style="margin-bottom: 20px;">
+      <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; flex-wrap: wrap; gap: 10px;">
+        <div>
+          <h2 style="margin: 0; font-size: 1.25rem;">Cenário de Simulação Guiado por Traço</h2>
+          <p style="margin: 4px 0 0 0; color: var(--text-muted); font-size: 0.85rem;">
+            Selecione uma coleta real para simular cenários operacionais hipotéticos.
+          </p>
+        </div>
+        <div style="display: flex; gap: 8px; align-items: center;">
+          <label for="sel-sessao" style="font-weight: 700; font-size: 0.85rem;">Sessão Base:</label>
+          <select id="sel-sessao" style="padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border-color); background: var(--bg-card); color: var(--text-main);">
+            <option value="">Carregando sessões...</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- GRID DE PARÂMETROS POR SETOR -->
+      <div class="sim-grid">
+        
+        <!-- SETOR 1: CATRACA (FILA 1) -->
+        <div class="param-card f1">
+          <h4>Fila 1: Entrada / Catraca</h4>
+          
+          <div class="param-group">
+            <label for="inp-c1">Quantidade de Catracas ($c_1$):</label>
+            <select id="inp-c1" style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
+              <option value="1" selected>1 Catraca</option>
+              <option value="2">2 Catracas</option>
+              <option value="3">3 Catracas</option>
+              <option value="4">4 Catracas</option>
+            </select>
+          </div>
+
+          <div class="param-group">
+            <label>Modo de Ajuste:</label>
+            <div style="display: flex; gap: 12px; font-size: 0.82rem;">
+              <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                <input type="radio" name="modoF1" value="taxa" checked onchange="SimulacoesApp.alternarModoF1('taxa')"> Fator de Taxa
+              </label>
+              <label style="cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                <input type="radio" name="modoF1" value="tempoFixo" onchange="SimulacoesApp.alternarModoF1('tempoFixo')"> Tempo Fixo
+              </label>
+            </div>
+          </div>
+
+          <!-- Slider Modo Taxa -->
+          <div class="param-group" id="grp-fatorF1">
+            <div class="param-row-val">
+              <label for="inp-fatorF1">Velocidade da Catraca:</label>
+              <span class="slider-val-badge" id="lbl-fatorF1">0%</span>
+            </div>
+            <input type="range" id="inp-fatorF1" min="-50" max="100" step="5" value="0" oninput="SimulacoesApp.atualizarLabelSlider('inp-fatorF1', 'lbl-fatorF1', '%')">
+            <span style="font-size: 0.72rem; color: var(--text-muted);">+100% duplica a taxa (tempo ÷ 2)</span>
+          </div>
+
+          <!-- Input Modo Tempo Fixo -->
+          <div class="param-group" id="grp-tempoFixoF1" style="display: none;">
+            <label for="inp-tempoFixoF1">Tempo Fixo por Aluno:</label>
+            <div class="param-row-val">
+              <input type="number" id="inp-tempoFixoF1" min="2" max="30" step="1" value="4" style="width: 80px; padding: 4px;">
+              <span style="font-size: 0.8rem; color: var(--text-muted);">segundos/pessoa</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- SETOR 2: BUFFET (FILA 2) -->
+        <div class="param-card f2">
+          <h4>Fila 2: Atendimento / Buffet</h4>
+
+          <div class="param-group">
+            <label for="inp-c2">Linhas de Distribuição ($c_2$):</label>
+            <select id="inp-c2" style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
+              <option value="1" selected>1 Linha</option>
+              <option value="2">2 Linhas</option>
+              <option value="3">3 Linhas</option>
+            </select>
+          </div>
+
+          <div class="param-group">
+            <div class="param-row-val">
+              <label for="inp-fatorF2">Velocidade do Buffet:</label>
+              <span class="slider-val-badge" id="lbl-fatorF2">0%</span>
+            </div>
+            <input type="range" id="inp-fatorF2" min="-50" max="100" step="5" value="0" oninput="SimulacoesApp.atualizarLabelSlider('inp-fatorF2', 'lbl-fatorF2', '%')">
+            <span style="font-size: 0.72rem; color: var(--text-muted);">Aceleração de entrega das bandejas</span>
+          </div>
+        </div>
+
+        <!-- SETOR 3: SALÃO DE MESAS -->
+        <div class="param-card f3">
+          <h4>Salão & Mesas (Refeição)</h4>
+
+          <div class="param-group">
+            <label for="inp-capacidadeMesas">Capacidade do Salão ($C_{\text{mesas}}$):</label>
+            <div class="param-row-val">
+              <input type="number" id="inp-capacidadeMesas" min="10" max="500" step="6" value="216" style="width: 100px; padding: 4px;">
+              <span style="font-size: 0.8rem; color: var(--text-muted);">cadeiras</span>
+            </div>
+          </div>
+
+          <div class="param-group">
+            <div class="param-row-val">
+              <label for="inp-deltaMesas">Tempo de Permanência:</label>
+              <span class="slider-val-badge" id="lbl-deltaMesas">0 min</span>
+            </div>
+            <input type="range" id="inp-deltaMesas" min="-10" max="15" step="1" value="0" oninput="SimulacoesApp.atualizarLabelSlider('inp-deltaMesas', 'lbl-deltaMesas', ' min', true)">
+            <span style="font-size: 0.72rem; color: var(--text-muted);">Deslocamento no tempo de mesa</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- BOTÃO DE EXECUÇÃO -->
+      <div style="margin-top: 16px; display: flex; justify-content: flex-end; gap: 10px;">
+        <button type="button" class="btn btn-secondary" onclick="SimulacoesApp.restaurarValoresPadrao()">Restaurar Padrões</button>
+        <button type="button" class="btn btn-primary" id="btn-executar" onclick="SimulacoesApp.executarSimulacao()" style="font-size: 1rem; padding: 8px 18px;">
+          ▶ Executar Simulação
+        </button>
+      </div>
+    </div>
+
+    <!-- MENSAGEM DE STATUS / PROCESSAMENTO -->
+    <div id="box-status-msg" style="display: none; padding: 14px; border-radius: 8px; margin-bottom: 16px; text-align: center; font-weight: 700;"></div>
+
+    <!-- RESULTADOS DA SIMULAÇÃO (OCULTO ATÉ A EXECUÇÃO) -->
+    <div id="container-resultados" style="display: none;">
+
+      <!-- BANNER DE CALIBRAÇÃO DO BASELINE -->
+      <div id="banner-calibracao" style="margin-bottom: 12px; font-size: 0.88rem; padding: 10px 14px; border-radius: 6px;"></div>
+
+      <!-- CARD DIAGNÓSTICO DE GARGALOS -->
+      <div id="card-diagnostico" class="status-card"></div>
+
+      <!-- TABELA COMPARATIVA LADO A LADO -->
+      <div class="card" style="margin-bottom: 16px; overflow-x: auto;">
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+          <h3 style="margin: 0; font-size: 1.1rem;">Comparação de Desempenho (Real vs. Simulado)</h3>
+          <button type="button" class="btn btn-secondary no-print" onclick="window.print()" style="font-size: 0.8rem; padding: 4px 10px;">
+            🖨️ Imprimir Relatório
+          </button>
+        </div>
+
+        <table class="tabela-comparativa">
+          <thead>
+            <tr>
+              <th>Indicador / Métrica</th>
+              <th style="text-align: right;">Cenário Real</th>
+              <th style="text-align: right;">Cenário Simulado</th>
+              <th style="text-align: right;">Variação ($\Delta$)</th>
+            </tr>
+          </thead>
+          <tbody id="tbody-metricas">
+            <!-- Inserido dinamicamente via JS -->
+          </tbody>
+        </table>
+      </div>
+
+      <!-- GRÁFICOS SOBREPOSTOS -->
+      <div class="sim-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
+        <div class="card">
+          <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Evolução do Tamanho da Fila (Fila 1)</h4>
+          <div class="chart-container-sim">
+            <canvas id="chart-fila-tempo"></canvas>
+          </div>
+        </div>
+        <div class="card">
+          <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Ocupação do Salão de Mesas</h4>
+          <div class="chart-container-sim">
+            <canvas id="chart-mesas-tempo"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <!-- PREMISSAS E LIMITAÇÕES DO MODELO -->
+      <div class="premissas-box no-print">
+        <strong>ℹ️ Premissas e Limitações do Modelo:</strong>
+        <ul>
+          <li><strong>Demanda Inelástica (*No Balking/No Reneging*):</strong> Os alunos chegam nos mesmos instantes históricos observados e não desistem da fila em decorrência do tamanho.</li>
+          <li><strong>Tempos de Serviço Vinculados ao Traço:</strong> Os tempos de atendimento decorrem das medições empíricas observadas, escalados proporcionalmente aos parâmetros selecionados.</li>
+          <li><strong>Fila Única com Despacho Paralelo:</strong> Em postos com $c > 1$, adota-se atendimento estritamente FIFO pelo próximo servidor disponível.</li>
+          <li><strong>Bloqueio de Serviço (*Service Blocking*):</strong> Caso o salão atinja lotação máxima, a linha de distribuição de refeições é retida até a desocupação de assentos.</li>
+        </ul>
+      </div>
+
+    </div>
+
+  </main>
+
+  <script type="module" src="simulacoes.js"></script>
+</body>
+</html>

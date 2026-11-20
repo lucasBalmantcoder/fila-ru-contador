@@ -5,6 +5,10 @@ O formato é baseado em [Keep a Changelog](https://keepachangelog.com/pt-BR/1.0.
 
 ## [Não lançado]
 ### Adicionado
+- Implementado motor de simulação por eventos discretos guiado por traço histórico (`shared/simulador.js`), suportando cenários "What-If" para dimensionamento de catracas ($c_1$), postos de buffet ($c_2$), velocidade de serviço e retenção por bloqueio nas mesas (*service blocking*).
+- Criada interface completa de simulações com gráficos sobrepostos, tabela comparativa lado a lado e diagnóstico de gargalos (`public/simulacoes.html`, `public/simulacoes.js`).
+- Adicionado menu de navegação global "Simulações" no cabeçalho das interfaces (`painel.html`, `historico.html`, `simulacoes.html`).
+- Adicionada rota `/simulacoes` e validação estrita por regex contra path traversal nos identificadores de sessão em `server/server.js`.
 - Atualizado documento de referência de métricas (`METRICAS.md`) para a versão 2.0, integrando o catálogo completo de métricas de ocupação e preenchimento das Mesas (216 cadeiras, M-110 a M-122), a nova dinâmica de fluxo contínuo na Fila 3 / Saída e as métricas de trânsito em encadeamentos multi-filas (M-86 a M-88).
 - Adicionada funcionalidade de edição de metadados da sessão (nome da observação, local/campus e observações descritivas) por meio de modal interativo na interface de histórico.
 - Adicionados endpoints `POST /api/sessoes/:id/editar` e suporte aos métodos `PUT`/`PATCH` no servidor para persistência e atualização dinâmica das informações da sessão.

@@ -17,6 +17,7 @@ import {
   calcularCoberturaPorFila
 } from '../shared/metricas.js';
 import { GerenciadorSessoes } from '../server/sessao.js';
+import { simularSessao } from '../shared/simulador.js';
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
@@ -786,6 +787,92 @@ const cabecaT17k = blocosF2T17k[0];
 assert(cabecaT17k.pessoa === 3, `Cabeça da Fila 2 avançou para Pessoa 3 (encontrado: ${cabecaT17k?.pessoa})`);
 assert(cabecaT17k.ehCabeca === true, 'Pessoa 3 é a cabeça da Fila 2');
 assert(cabecaT17k.cor === '#ec4899', 'Pessoa 3 recebe a cor rosa da cabeça (#ec4899)');
+
+/* --------------------------------------------------------------------------
+   28. Simulação de Eventos Discretos Guiada por Traço (What-If)
+   -------------------------------------------------------------------------- */
+console.log('\n--- 28. Simulação de Eventos Discretos (Trace-Driven DES) ---');
+
+// 1. Edge Case: Sessão vazia
+const rVazia = simularSessao([]);
+assert(rVazia.sucesso === false, 'Sessão vazia retorna erro com sucesso: false');
+
+// 2. Edge Case: 1 único aluno
+const evsUmAluno = [
+  { seq: 1, t: 1000, tipo: 'sessao_iniciada', fila: 1 },
+  { seq: 2, t: 2000, tipo: 'chegada', fila: 1, pessoa: 1 },
+  { seq: 3, t: 6000, tipo: 'atendimento', fila: 1, pessoa: 1 },
+  { seq: 4, t: 10000, tipo: 'sessao_encerrada', fila: 1 }
+];
+const rUmAluno = simularSessao(evsUmAluno, {}, { c1: 1 });
+assert(rUmAluno.sucesso === true, 'Sessão com 1 aluno simula com sucesso');
+const p1Sim = rUmAluno.metricasSimuladas.pessoas.find(p => p.pessoa === 1);
+assert(p1Sim && p1Sim.esperaMs === 4000, 'Aluno único com servidor livre é atendido sem espera na fila (tempo = serviço puro)');
+
+// 3. Chegadas simultâneas (t1 = t2)
+const evsSimultaneos = [
+  { seq: 1, t: 1000, tipo: 'sessao_iniciada', fila: 1 },
+  { seq: 2, t: 2000, tipo: 'chegada', fila: 1, pessoa: 1 },
+  { seq: 3, t: 2000, tipo: 'chegada', fila: 1, pessoa: 2 },
+  { seq: 4, t: 6000, tipo: 'atendimento', fila: 1, pessoa: 1 },
+  { seq: 5, t: 10000, tipo: 'atendimento', fila: 1, pessoa: 2 },
+  { seq: 6, t: 15000, tipo: 'sessao_encerrada', fila: 1 }
+];
+const rSimultaneos = simularSessao(evsSimultaneos, {}, { c1: 1 });
+assert(rSimultaneos.sucesso === true, 'Chegadas simultâneas simuladas com sucesso');
+assert(rSimultaneos.eventosSimulados.filter(e => e.tipo === 'chegada' && e.fila === 1).length === 2, 'Ambas as chegadas simultâneas foram registradas');
+
+// 4. Conservação de Massa e Aderência do Baseline
+const evsBase = [{ seq: 1, t: 0, tipo: 'sessao_iniciada', fila: 1, config: { servidores: 1 } }];
+for (let i = 1; i <= 10; i++) {
+  evsBase.push({ seq: evsBase.length + 1, t: i * 10000, tipo: 'chegada', fila: 1, pessoa: i });
+  evsBase.push({ seq: evsBase.length + 1, t: i * 10000 + 4000, tipo: 'atendimento', fila: 1, pessoa: i });
+}
+evsBase.push({ seq: evsBase.length + 1, t: 120000, tipo: 'sessao_encerrada', fila: 1 });
+
+const rBase = simularSessao(evsBase, { servidores: 1 }, { c1: 1, fatorF1: 0 });
+assert(rBase.sucesso === true, 'Sessão baseline simulada com sucesso');
+assert(rBase.metricasSimuladas.filas[1].n_chegadas === 10, 'Conservação de massa: n_chegadas simuladas (10) == reais (10)');
+assert(rBase.metricasSimuladas.filas[1].n_atendimentos === 10, 'Conservação de massa: n_atendimentos simulados (10) == reais (10)');
+assert(rBase.calibracao.diffPerc <= 5.0, `Aderência do baseline: desvio percentual <= 5% (obtido: ${rBase.calibracao.diffPerc.toFixed(2)}%)`);
+
+// 5. Monotonicidade Não-Estrita (c1 -> c1 + 1 => W_q1 decresce ou permanece igual)
+const evsCongestao = [{ seq: 1, t: 0, tipo: 'sessao_iniciada', fila: 1, config: { servidores: 1 } }];
+for (let i = 1; i <= 6; i++) {
+  evsCongestao.push({ seq: evsCongestao.length + 1, t: i * 2000, tipo: 'chegada', fila: 1, pessoa: i });
+  evsCongestao.push({ seq: evsCongestao.length + 1, t: i * 10000, tipo: 'atendimento', fila: 1, pessoa: i });
+}
+evsCongestao.push({ seq: evsCongestao.length + 1, t: 70000, tipo: 'sessao_encerrada', fila: 1 });
+
+const rSimC1 = simularSessao(evsCongestao, {}, { c1: 1 });
+const rSimC2 = simularSessao(evsCongestao, {}, { c1: 2 });
+const wqC1 = rSimC1.metricasSimuladas.filas[1].statsEspera.media;
+const wqC2 = rSimC2.metricasSimuladas.filas[1].statsEspera.media;
+assert(wqC2 <= wqC1, `Monotonicidade não-estrita: W_q1(c=2) [${wqC2}s] <= W_q1(c=1) [${wqC1}s]`);
+
+// 6. Respeito Estrito à Capacidade das Mesas e Service Blocking
+const rBloqueio = simularSessao(evsCongestao, {}, { c1: 2, c2: 1, capacidadeMesas: 2, deltaMinutosMesas: 5 });
+assert(rBloqueio.diagnostico.picoOcupacaoMesas <= 2, `Ocupação máxima das mesas <= capacidade (pico: ${rBloqueio.diagnostico.picoOcupacaoMesas} <= 2)`);
+assert(rBloqueio.diagnostico.alunosBloqueadosCount > 0, `Comprovação de Service Blocking: ${rBloqueio.diagnostico.alunosBloqueadosCount} alunos foram retidos por falta de assento`);
+
+// 7. Determinismo Estrito
+const run1 = simularSessao(evsCongestao, {}, { c1: 2, fatorF1: 20, c2: 1, capacidadeMesas: 100 });
+const run2 = simularSessao(evsCongestao, {}, { c1: 2, fatorF1: 20, c2: 1, capacidadeMesas: 100 });
+assert(JSON.stringify(run1.eventosSimulados) === JSON.stringify(run2.eventosSimulados), 'Determinismo estrito: duas execuções com mesma entrada produzem eventos 100% idênticos');
+
+// 8. Performance e Complexidade: 5.000 chegadas em < 500ms
+const evsGrandes = [{ seq: 1, t: 0, tipo: 'sessao_iniciada', fila: 1 }];
+for (let i = 1; i <= 5000; i++) {
+  evsGrandes.push({ seq: i + 1, t: i * 1000, tipo: 'chegada', fila: 1, pessoa: i });
+  evsGrandes.push({ seq: i + 5001, t: i * 1000 + 3000, tipo: 'atendimento', fila: 1, pessoa: i });
+}
+evsGrandes.push({ seq: 10002, t: 5000 * 1000 + 10000, tipo: 'sessao_encerrada', fila: 1 });
+
+const tIniPerf = Date.now();
+const rPerf = simularSessao(evsGrandes, {}, { c1: 2, c2: 2, capacidadeMesas: 216 });
+const duracaoPerfMs = Date.now() - tIniPerf;
+assert(rPerf.sucesso === true, 'Simulação de 5.000 chegadas executada com sucesso');
+assert(duracaoPerfMs < 500, `Performance de Simulação: 5.000 chegadas processadas em ${duracaoPerfMs}ms (< 500ms)`);
 
 try {
   fs.rmSync(dirTempTeste, { recursive: true, force: true });

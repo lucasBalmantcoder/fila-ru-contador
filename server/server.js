@@ -66,6 +66,8 @@ const servidorHttp = http.createServer((req, res) => {
     caminhoArquivoRelativo = '/painel.html';
   } else if (pathname === '/historico') {
     caminhoArquivoRelativo = '/historico.html';
+  } else if (pathname === '/simulacoes') {
+    caminhoArquivoRelativo = '/simulacoes.html';
   }
 
   // 3. Servir arquivos estáticos de public/ ou shared/
@@ -291,6 +293,13 @@ async function tratarRequisicaoApi(req, res, pathname, urlParsed) {
   if (matchSessao) {
     const sessaoId = matchSessao[1];
     const subAcao = matchSessao[3] || '';
+
+    // Validação estrita de sessaoId contra path traversal
+    if (!/^[a-zA-Z0-9_\-]+$/.test(sessaoId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ erro: 'Identificador de sessão inválido.' }));
+      return;
+    }
 
     // POST /api/sessoes/:id/excluir
     if (subAcao === 'excluir' && req.method === 'POST') {
