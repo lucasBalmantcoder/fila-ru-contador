@@ -127,6 +127,32 @@
       position: relative;
     }
 
+    .kpi-delta-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.75rem;
+      margin-top: 4px;
+      padding-top: 4px;
+      border-top: 1px dashed var(--border-color);
+    }
+    .kpi-delta-row strong {
+      color: var(--text-main);
+    }
+
+    .chart-wrapper {
+      position: relative;
+      height: 260px;
+      width: 100%;
+    }
+    .chart-container {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 8px;
+      padding: 14px;
+      margin-top: 14px;
+    }
+
     .premissas-box {
       background: var(--bg-subtle);
       border: 1px solid var(--border-color);
@@ -142,18 +168,21 @@
     }
 
     @media print {
-      header, .no-print, .btn, #form-simulacao {
+      header, .no-print, .btn, #form-simulacao, #tab-nav-filas-sim {
         display: none !important;
       }
       body {
         background: #fff !important;
         color: #000 !important;
       }
-      .card {
+      .card, .chart-container, .chart-container-sim {
         border: 1px solid #ccc !important;
         box-shadow: none !important;
+        break-inside: avoid;
+        background: #fff !important;
+        color: #000 !important;
       }
-      .chart-container-sim {
+      .chart-container-sim, .chart-wrapper {
         break-inside: avoid;
         height: 220px;
       }
@@ -311,51 +340,255 @@
     <!-- RESULTADOS DA SIMULAÇÃO (OCULTO ATÉ A EXECUÇÃO) -->
     <div id="container-resultados" style="display: none;">
 
-      <!-- BANNER DE CALIBRAÇÃO DO BASELINE -->
-      <div id="banner-calibracao" style="margin-bottom: 12px; font-size: 0.88rem; padding: 10px 14px; border-radius: 6px;"></div>
+      <!-- NAVEGAÇÃO POR ABAS: VISÃO GERAL E POR FILA -->
+      <nav class="tab-nav" id="tab-nav-filas-sim">
+        <button type="button" class="tab-btn active" id="tab-sim-btn-geral" onclick="SimulacoesApp.selecionarAba('geral')">Visão Geral</button>
+        <!-- Abas dinâmicas F1, F2, F3 geradas via JS -->
+      </nav>
 
-      <!-- CARD DIAGNÓSTICO DE GARGALOS -->
-      <div id="card-diagnostico" class="status-card"></div>
+      <!-- CONTEÚDO DAS ABAS -->
+      <div id="conteudo-abas-sim">
 
-      <!-- TABELA COMPARATIVA LADO A LADO -->
-      <div class="card" style="margin-bottom: 16px; overflow-x: auto;">
-        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
-          <h3 style="margin: 0; font-size: 1.1rem;">Comparação de Desempenho (Real vs. Simulado)</h3>
-          <button type="button" class="btn btn-secondary no-print" onclick="window.print()" style="font-size: 0.8rem; padding: 4px 10px;">
-            🖨️ Imprimir Relatório
-          </button>
-        </div>
+        <!-- 1. ABA: VISÃO GERAL -->
+        <div id="aba-sim-geral" style="display: flex; flex-direction: column; gap: 14px;">
 
-        <table class="tabela-comparativa">
-          <thead>
-            <tr>
-              <th>Indicador / Métrica</th>
-              <th style="text-align: right;">Cenário Real</th>
-              <th style="text-align: right;">Cenário Simulado</th>
-              <th style="text-align: right;">Variação ($\Delta$)</th>
-            </tr>
-          </thead>
-          <tbody id="tbody-metricas">
+          <!-- BANNER DE CALIBRAÇÃO DO BASELINE -->
+          <div id="banner-calibracao" style="font-size: 0.88rem; padding: 10px 14px; border-radius: 6px;"></div>
+
+          <!-- CARD DIAGNÓSTICO DE GARGALOS -->
+          <div id="card-diagnostico" class="status-card"></div>
+
+          <!-- CARDS RESUMO DAS FILAS ATIVAS (REAL VS SIMULADO) -->
+          <div id="cards-resumo-filas-sim" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px;"></div>
+
+          <!-- CARD: PERCURSO COMPLETO ATÉ AS MESAS (F1 + F2) -->
+          <div class="card" id="card-transito-mesas-sim" style="display: none;">
+            <div class="card-title">
+              <span>Percurso Completo: Chegada na Fila 1 até as Mesas (Fila 2)</span>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento catraca → buffet</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 6px;">
+              <div class="hud-stat">
+                <span class="label">Pessoas que Chegaram às Mesas</span>
+                <span class="value" id="tm-sim-count">0</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted)" id="tm-sim-count-comp">Real: 0</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Tempo Médio até as Mesas</span>
+                <span class="value" id="tm-sim-media">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="tm-sim-media-real">Real: 00:00</span>
+                  <span id="tm-sim-media-delta">-</span>
+                </div>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Mediana até as Mesas</span>
+                <span class="value" id="tm-sim-mediana">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="tm-sim-mediana-real">Real: 00:00</span>
+                  <span id="tm-sim-mediana-delta">-</span>
+                </div>
+              </div>
+              <div class="hud-stat">
+                <span class="label">P90 até as Mesas</span>
+                <span class="value" id="tm-sim-p90">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="tm-sim-p90-real">Real: 00:00</span>
+                  <span id="tm-sim-p90-delta">-</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD: PERCURSO COMPLETO ATÉ A SAÍDA (F1 + F2 + F3) -->
+          <div class="card" id="card-transito-saida-sim" style="display: none;">
+            <div class="card-title">
+              <span>Percurso Completo: Chegada na Fila 1 até a Saída (Fila 3)</span>
+              <span style="font-size:0.8rem; color:var(--text-muted)">Encadeamento F1 → F2 → F3</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 6px;">
+              <div class="hud-stat">
+                <span class="label">Pessoas que Saíram do Restaurante</span>
+                <span class="value" id="ts-sim-count">0</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted)" id="ts-sim-count-comp">Real: 0</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Tempo Médio até a Saída</span>
+                <span class="value" id="ts-sim-media">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="ts-sim-media-real">Real: 00:00</span>
+                  <span id="ts-sim-media-delta">-</span>
+                </div>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Mediana até a Saída</span>
+                <span class="value" id="ts-sim-mediana">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="ts-sim-mediana-real">Real: 00:00</span>
+                  <span id="ts-sim-mediana-delta">-</span>
+                </div>
+              </div>
+              <div class="hud-stat">
+                <span class="label">P90 até a Saída</span>
+                <span class="value" id="ts-sim-p90">00:00</span>
+                <div class="kpi-delta-row">
+                  <span style="color:var(--text-muted)" id="ts-sim-p90-real">Real: 00:00</span>
+                  <span id="ts-sim-p90-delta">-</span>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- CARD: OCUPAÇÃO DO SALÃO E MESAS -->
+          <div class="card" id="card-ocupacao-mesas-sim">
+            <div class="card-title">
+              <span>Ocupação do Salão e Mesas</span>
+              <span style="font-size:0.8rem; color:var(--text-muted)" id="mesas-sim-capacidade-info">Capacidade configurada</span>
+            </div>
+            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; margin-top: 6px;">
+              <div class="hud-stat">
+                <span class="label">Pico de Ocupação</span>
+                <span class="value" id="mesas-sim-pico-cadeiras" style="color:#0284c7">0 cad.</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-sim-pico-perc">0% da capacidade</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Cadeiras Livres no Pico</span>
+                <span class="value" id="mesas-sim-livres-pico">0</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-sim-total-lugares">de 216 lugares</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Média de Lugares Ocupados</span>
+                <span class="value" id="mesas-sim-media-cadeiras">0 cad.</span>
+                <span style="font-size:0.75rem; color:var(--text-muted)" id="mesas-sim-media-perc">0% em média</span>
+              </div>
+              <div class="hud-stat">
+                <span class="label">Alunos Retidos por Bloqueio</span>
+                <span class="value" id="mesas-sim-bloqueados-qtd">0</span>
+                <span style="font-size:0.75rem;" id="mesas-sim-bloqueio-status">Sem bloqueio</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- TABELA COMPARATIVA LADO A LADO -->
+          <div class="card" style="overflow-x: auto;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+              <h3 style="margin: 0; font-size: 1.1rem;">Comparação Consolidada de Desempenho (Real vs. Simulado)</h3>
+              <button type="button" class="btn btn-secondary no-print" onclick="window.print()" style="font-size: 0.8rem; padding: 4px 10px;">
+                🖨️ Imprimir Relatório
+              </button>
+            </div>
+
+            <table class="tabela-comparativa">
+              <thead>
+                <tr>
+                  <th>Indicador / Métrica</th>
+                  <th style="text-align: right;">Cenário Real</th>
+                  <th style="text-align: right;">Cenário Simulado</th>
+                  <th style="text-align: right;">Variação ($\Delta$)</th>
+                </tr>
+              </thead>
+              <tbody id="tbody-metricas">
+                <!-- Inserido dinamicamente via JS -->
+              </tbody>
+            </table>
+          </div>
+
+          <!-- GRÁFICOS SOBREPOSTOS GERAIS -->
+          <div class="sim-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 10px;">
+            <div class="card">
+              <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Evolução do Tamanho da Fila (Fila 1: Real vs. Simulado)</h4>
+              <div class="chart-container-sim">
+                <canvas id="chart-fila-tempo"></canvas>
+              </div>
+            </div>
+            <div class="card">
+              <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Ocupação do Salão de Mesas vs. Capacidade</h4>
+              <div class="chart-container-sim">
+                <canvas id="chart-mesas-tempo"></canvas>
+              </div>
+            </div>
+          </div>
+
+        </div> <!-- FIM ABA VISÃO GERAL -->
+
+        <!-- 2. ABA: DETALHES DA FILA ESPECÍFICA (F1, F2 ou F3) -->
+        <div id="aba-sim-fila-detalhe" style="display: none; flex-direction: column; gap: 14px;">
+
+          <!-- Alerta Sem Dados -->
+          <div id="box-sim-sem-dados" style="display: none; background: rgba(217, 119, 6, 0.12); border: 1px solid var(--warning); padding: 12px; border-radius: 8px; color: var(--warning); font-weight: 700;">
+            ⚠️ Sem dados: Nenhum evento foi registrado para esta fila na sessão base.
+          </div>
+
+          <!-- GRID DE KPIS DA FILA SELECIONADA (8 CARDS) -->
+          <div id="container-sim-kpis-fila" class="kpi-grid-relatorio">
             <!-- Inserido dinamicamente via JS -->
-          </tbody>
-        </table>
-      </div>
+          </div>
 
-      <!-- GRÁFICOS SOBREPOSTOS -->
-      <div class="sim-grid" style="grid-template-columns: 1fr 1fr; margin-bottom: 20px;">
-        <div class="card">
-          <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Evolução do Tamanho da Fila (Fila 1)</h4>
-          <div class="chart-container-sim">
-            <canvas id="chart-fila-tempo"></canvas>
+          <!-- Ociosidade Segmentada & Bloqueio Operacional -->
+          <div class="form-grid">
+            <div class="card">
+              <div class="card-title"><span>Ociosidade & Bloqueio Operacional</span></div>
+              <div id="box-sim-ociosidade" style="font-size: 0.85rem; line-height: 1.7;"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>Equipe & Postos Ativos ($c$)</span></div>
+              <div id="box-sim-postos-info" style="font-size: 0.85rem; line-height: 1.7;"></div>
+            </div>
           </div>
-        </div>
-        <div class="card">
-          <h4 style="margin: 0 0 8px 0; font-size: 0.95rem;">Ocupação do Salão de Mesas</h4>
-          <div class="chart-container-sim">
-            <canvas id="chart-mesas-tempo"></canvas>
+
+          <!-- Lei de Little & Modelo Teórico Erlang C -->
+          <div class="form-grid">
+            <div class="card">
+              <div class="card-title"><span>Lei de Little ($L = \lambda \cdot W$)</span></div>
+              <div id="box-sim-little" style="font-size: 0.85rem; line-height: 1.6;"></div>
+            </div>
+
+            <div class="card">
+              <div class="card-title"><span>Modelo Teórico $M/M/c$ (Erlang C)</span></div>
+              <div id="box-sim-teorico" style="font-size: 0.85rem; line-height: 1.6;"></div>
+            </div>
           </div>
-        </div>
-      </div>
+
+          <!-- TABELA DE BLOCOS DE TEMPO (5 MINUTOS) COMPARATIVA -->
+          <div class="card">
+            <div class="card-title" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 6px;">
+              <div>
+                <span>Agregação por Blocos de Tempo (Janelas de 5 minutos)</span>
+                <span style="font-size: 0.75rem; color: var(--text-muted); display: block;">Comparativo de chegadas e passagens no horário de pico</span>
+              </div>
+              <span style="font-size: 0.75rem; color: var(--text-muted)">Linhas em vermelho: 0 passagens</span>
+            </div>
+            <div class="table-container" style="max-height: 280px; overflow-y: auto;">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Bloco</th>
+                    <th>Horário</th>
+                    <th style="text-align: right;">Chegadas</th>
+                    <th style="text-align: right;">Passagens Reais</th>
+                    <th style="text-align: right;">Passagens Simuladas</th>
+                    <th style="text-align: right;">Variação ($\Delta$)</th>
+                    <th style="text-align: right;">Vazão Sim.</th>
+                    <th style="text-align: center;">Situação</th>
+                  </tr>
+                </thead>
+                <tbody id="tabela-sim-blocos-corpo"></tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- GRÁFICO DE CURVAS ACUMULADAS DA FILA -->
+          <div class="chart-container">
+            <div class="card-title"><span>Curvas Acumuladas da Fila (Chegadas vs. Passagens Reais vs. Passagens Simuladas)</span></div>
+            <div class="chart-wrapper">
+              <canvas id="chart-sim-fila-acumulado"></canvas>
+            </div>
+          </div>
+
+        </div> <!-- FIM ABA DETALHES DA FILA -->
+
+      </div> <!-- FIM CONTEUDO ABAS -->
 
       <!-- PREMISSAS E LIMITAÇÕES DO MODELO -->
       <div class="premissas-box no-print">
