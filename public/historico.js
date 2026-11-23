@@ -1223,25 +1223,38 @@ const HistoricoApp = {
       });
     }
 
-    // 3. Histograma
+    // 3. Histograma de Tempos de Espera (em Minutos)
     const ctxHist = document.getElementById('chart-histograma');
     if (ctxHist && mFila.pessoas) {
-      const temposSeg = mFila.pessoas
+      const temposMin = mFila.pessoas
         .filter(p => p.status === 'atendida' && p.esperaMs !== null)
-        .map(p => Math.round(p.esperaMs / 1000));
+        .map(p => p.esperaMs / 60000);
 
-      const maxT = Math.max(...temposSeg, 60);
-      const nBins = 8;
-      const binSize = Math.max(15, Math.ceil(maxT / nBins));
+      const maxMin = Math.max(...temposMin, 0.5);
+
+      function obterPassoMin(maxVal) {
+        const passos = [0.5, 1, 2, 3, 5, 10, 15, 20, 30];
+        for (const s of passos) {
+          if (Math.ceil(maxVal / s) <= 9) return s;
+        }
+        return Math.ceil(maxVal / 8);
+      }
+
+      const binSizeMin = obterPassoMin(maxMin);
+      const nBins = Math.max(1, Math.ceil(maxMin / binSizeMin));
       const bins = Array(nBins).fill(0);
       const binLabels = [];
 
       for (let i = 0; i < nBins; i++) {
-        binLabels.push(`${i * binSize}-${(i + 1) * binSize}s`);
+        const de = i * binSizeMin;
+        const ate = (i + 1) * binSizeMin;
+        const deStr = de % 1 === 0 ? String(de) : formatarNumero(de, 1);
+        const ateStr = ate % 1 === 0 ? String(ate) : formatarNumero(ate, 1);
+        binLabels.push(`${deStr}-${ateStr} min`);
       }
 
-      temposSeg.forEach(t => {
-        const idx = Math.min(nBins - 1, Math.floor(t / binSize));
+      temposMin.forEach(t => {
+        const idx = Math.min(nBins - 1, Math.floor(t / binSizeMin));
         bins[idx]++;
       });
 
@@ -1265,12 +1278,15 @@ const HistoricoApp = {
             },
             tooltip: {
               mode: 'index',
-              intersect: false
+              intersect: false,
+              callbacks: {
+                label: (ctx) => ` ${ctx.parsed.y} ${ctx.parsed.y === 1 ? 'pessoa' : 'pessoas'}`
+              }
             }
           },
           scales: {
             x: {
-              title: { display: true, text: 'Faixa de tempo de espera (segundos)', color: corTexto, font: { size: 11, weight: '600' } },
+              title: { display: true, text: 'Faixa de tempo de espera (minutos)', color: corTexto, font: { size: 11, weight: '600' } },
               ticks: { color: corTexto, autoSkip: true, maxRotation: 45, minRotation: 0 },
               grid: { color: corGrid }
             },
@@ -1325,7 +1341,7 @@ const HistoricoApp = {
         <td><span style="font-weight:700;">F${p.fila || 1}</span></td>
         <td>${formatarHoraLocal(p.chegadaMs)}</td>
         <td>${p.atendimentoMs ? formatarHoraLocal(p.atendimentoMs) : '--'}</td>
-        <td>${p.esperaMs !== null ? `${formatarNumero(p.esperaMs / 1000, 1)} s` : '--'}</td>
+        <td>${p.esperaMs !== null ? `<span title="${formatarDuracao(p.esperaMs)}">${formatarNumero(p.esperaMs / 60000, 1)} min</span>` : '--'}</td>
         <td>${p.intervaloAtendimentoMs !== null ? `${formatarNumero(p.intervaloAtendimentoMs / 1000, 1)} s` : '--'}</td>
         <td>${p.dispositivoChegada || '--'}</td>
         <td>${p.dispositivoAtendimento || '--'}</td>
