@@ -176,10 +176,11 @@ fila-ru/
 ├── shared/               # Núcleo Isomórfico (roda no Node e no Navegador)
 │   ├── estado.js         # Funções puras de derivação de estado a partir de eventos
 │   ├── metricas.js       # Implementação matemática de todas as métricas M-01 a M-122
+│   ├── simulador.js      # Motor de simulação por eventos discretos (DES)
 │   └── movimento.js      # Geometria do restaurante, rotas em polilinha e animações
 │
 ├── teste/                # Garantia de Qualidade
-│   └── testes.js         # Bateria com 47 testes unitários e de integração
+│   └── testes.js         # Bateria com 203 testes unitários e de integração
 │
 ├── dados/                # Diretório de persistência das coletas realizadas
 │   └── presets.json      # Configuração dos modelos de fila (somente fila, mesas, etc.)
@@ -263,7 +264,7 @@ fila-ru/
 
 - **Núcleo do Sistema (Backend e Frontend Local):** Servidor HTTP/WebSocket em Node.js nativo (`server/`), interfaces de coleta mobile (`celular.html`), painel em tempo real (`painel.html`) e central de análise/replay (`historico.html`) 100% operacionais.
 - **Motor Matemático e Isomorfismo:** Biblioteca `shared/` implementada com cálculo de mais de 100 métricas da Teoria das Filas (`M-01` a `M-122`), validação da Lei de Little e derivação de estado por _Event Sourcing_ (`eventos.jsonl`).
-- **Garantia de Qualidade:** Bateria de 47 testes unitários e de integração (`teste/testes.js`) validando concorrência, reversão de eventos e consistência matemática.
+- **Garantia de Qualidade:** Bateria de 203 testes unitários e de integração (`teste/testes.js`) validando concorrência, reversão de eventos, motor de simulação por eventos discretos e consistência matemática.
 
 ### 9.2 Frentes de Planejamento e Próximos Passos (Escopo para a IA)
 
