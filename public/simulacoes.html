@@ -237,7 +237,7 @@
           <h4>Fila 1: Entrada / Catraca</h4>
           
           <div class="param-group">
-            <label for="inp-c1">Quantidade de Catracas ($c_1$):</label>
+            <label for="inp-c1">Quantidade de Catracas (c₁):</label>
             <select id="inp-c1" style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
               <option value="1" selected>1 Catraca</option>
               <option value="2">2 Catracas</option>
@@ -283,7 +283,7 @@
           <h4>Fila 2: Atendimento / Buffet</h4>
 
           <div class="param-group">
-            <label for="inp-c2">Linhas de Distribuição ($c_2$):</label>
+            <label for="inp-c2">Linhas de Distribuição (c₂):</label>
             <select id="inp-c2" style="padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border-color);">
               <option value="1" selected>1 Linha</option>
               <option value="2">2 Linhas</option>
@@ -306,7 +306,7 @@
           <h4>Salão & Mesas (Refeição)</h4>
 
           <div class="param-group">
-            <label for="inp-capacidadeMesas">Capacidade do Salão ($C_{\text{mesas}}$):</label>
+            <label for="inp-capacidadeMesas">Capacidade do Salão (Mesas):</label>
             <div class="param-row-val">
               <input type="number" id="inp-capacidadeMesas" min="10" max="500" step="6" value="216" style="width: 100px; padding: 4px;">
               <span style="font-size: 0.8rem; color: var(--text-muted);">cadeiras</span>
@@ -484,7 +484,7 @@
                   <th>Indicador / Métrica</th>
                   <th style="text-align: right;">Cenário Real</th>
                   <th style="text-align: right;">Cenário Simulado</th>
-                  <th style="text-align: right;">Variação ($\Delta$)</th>
+                  <th style="text-align: right;">Variação (Δ)</th>
                 </tr>
               </thead>
               <tbody id="tbody-metricas">
@@ -532,7 +532,7 @@
             </div>
 
             <div class="card">
-              <div class="card-title"><span>Equipe & Postos Ativos ($c$)</span></div>
+              <div class="card-title"><span>Equipe & Postos Ativos (c)</span></div>
               <div id="box-sim-postos-info" style="font-size: 0.85rem; line-height: 1.7;"></div>
             </div>
           </div>
@@ -540,12 +540,12 @@
           <!-- Lei de Little & Modelo Teórico Erlang C -->
           <div class="form-grid">
             <div class="card">
-              <div class="card-title"><span>Lei de Little ($L = \lambda \cdot W$)</span></div>
+              <div class="card-title"><span>Lei de Little (L = λ · W)</span></div>
               <div id="box-sim-little" style="font-size: 0.85rem; line-height: 1.6;"></div>
             </div>
 
             <div class="card">
-              <div class="card-title"><span>Modelo Teórico $M/M/c$ (Erlang C)</span></div>
+              <div class="card-title"><span>Modelo Teórico M/M/c (Erlang C)</span></div>
               <div id="box-sim-teorico" style="font-size: 0.85rem; line-height: 1.6;"></div>
             </div>
           </div>
@@ -568,7 +568,7 @@
                     <th style="text-align: right;">Chegadas</th>
                     <th style="text-align: right;">Passagens Reais</th>
                     <th style="text-align: right;">Passagens Simuladas</th>
-                    <th style="text-align: right;">Variação ($\Delta$)</th>
+                    <th style="text-align: right;">Variação (Δ)</th>
                     <th style="text-align: right;">Vazão Sim.</th>
                     <th style="text-align: center;">Situação</th>
                   </tr>
@@ -596,7 +596,7 @@
         <ul>
           <li><strong>Demanda Inelástica (*No Balking/No Reneging*):</strong> Os alunos chegam nos mesmos instantes históricos observados e não desistem da fila em decorrência do tamanho.</li>
           <li><strong>Tempos de Serviço Vinculados ao Traço:</strong> Os tempos de atendimento decorrem das medições empíricas observadas, escalados proporcionalmente aos parâmetros selecionados.</li>
-          <li><strong>Fila Única com Despacho Paralelo:</strong> Em postos com $c > 1$, adota-se atendimento estritamente FIFO pelo próximo servidor disponível.</li>
+          <li><strong>Fila Única com Despacho Paralelo:</strong> Em postos com c > 1, adota-se atendimento estritamente FIFO pelo próximo servidor disponível.</li>
           <li><strong>Bloqueio de Serviço (*Service Blocking*):</strong> Caso o salão atinja lotação máxima, a linha de distribuição de refeições é retida até a desocupação de assentos.</li>
         </ul>
       </div>

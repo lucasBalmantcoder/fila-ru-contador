@@ -463,7 +463,7 @@ export const SimulacoesApp = {
 
     const linhas = [
       {
-        nome: 'Alunos Atendidos na Catraca (n_s)',
+        nome: 'Alunos Atendidos na Catraca (n<sub>s</sub>)',
         real: mReal1?.n_atendimentos || 0,
         sim: mSim1?.n_atendimentos || 0,
         tipo: 'int',
@@ -488,7 +488,7 @@ export const SimulacoesApp = {
         tipo: 'tempo'
       },
       {
-        nome: 'Fila Média Ponderada no Tempo (L_q1)',
+        nome: 'Fila Média Ponderada no Tempo (L<sub>q1</sub>)',
         real: mReal1?.filaTempo?.mediaPonderada || 0,
         sim: mSim1?.filaTempo?.mediaPonderada || 0,
         tipo: 'num2'
@@ -540,7 +540,7 @@ export const SimulacoesApp = {
     for (const item of linhas) {
       const tr = document.createElement('tr');
       const tdNome = document.createElement('td');
-      tdNome.textContent = item.nome;
+      tdNome.innerHTML = item.nome;
 
       const tdReal = document.createElement('td');
       tdReal.className = 'num';
@@ -850,8 +850,8 @@ export const SimulacoesApp = {
     if (teoSim.aplicavel) {
       box.innerHTML = `
         <p>• <strong>Servidores:</strong> c = ${teoSim.c} • <strong>Intensidade de Tráfego:</strong> a = ${formatarNumero(teoSim.a ?? 0, 2)} Erlangs</p>
-        <p>• <strong>Fila Teórica Erlang C (L_q):</strong> <strong>${formatarNumero(teoSim.Lq ?? 0, 2)} pessoas</strong> (Traço Simulado: ${formatarNumero(mSim.filaTempo?.mediaPonderada ?? 0, 2)})</p>
-        <p>• <strong>Tempo de Espera Teórico (W_q):</strong> <strong>${formatarDuracao((teoSim.Wq_seg ?? 0) * 1000).substring(3)}</strong> (Traço Simulado: ${formatarDuracao((mSim.statsEspera?.media ?? 0) * 1000).substring(3)})</p>
+        <p>• <strong>Fila Teórica Erlang C (L<sub>q</sub>):</strong> <strong>${formatarNumero(teoSim.Lq ?? 0, 2)} pessoas</strong> (Traço Simulado: ${formatarNumero(mSim.filaTempo?.mediaPonderada ?? 0, 2)})</p>
+        <p>• <strong>Tempo de Espera Teórico (W<sub>q</sub>):</strong> <strong>${formatarDuracao((teoSim.Wq_seg ?? 0) * 1000).substring(3)}</strong> (Traço Simulado: ${formatarDuracao((mSim.statsEspera?.media ?? 0) * 1000).substring(3)})</p>
         <p>• <strong>Probabilidade de Espera P(W > 0):</strong> <strong>${formatarNumero((teoSim.P_espera ?? 0) * 100, 1)}%</strong></p>
       `;
     } else {
